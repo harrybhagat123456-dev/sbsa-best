@@ -31,14 +31,13 @@ _ARIA2C_ARGS = (
     '-x 16 '                       # 16 connections per server (max)
     '-s 16 '                       # 16 splits per file (max)
     '-j 16 '                       # 16 parallel fragment downloads (max)
-    '--min-split-size=512K '       # smaller splits = more parallelism
+    '--min-split-size=1M '         # minimum valid value for aria2c
     '--disk-cache=256M '           # large cache for maximum throughput
     '--file-allocation=none '
     '--enable-http-pipelining=true '
     '--http-accept-gzip=true '
     '--max-tries=0 '
-    '--retry-wait=1 '              # retry faster
-    '--piece-length=512K'          # smaller pieces = more parallel chunks
+    '--retry-wait=1'               # retry faster
 )
 _YTDLP_EXTRA = (
     '-R 0 '                        # infinite retries
