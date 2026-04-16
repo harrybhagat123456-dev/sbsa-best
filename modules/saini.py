@@ -28,23 +28,26 @@ last_download_error = ""
 # Shared aria2c args used in every yt-dlp download command
 _ARIA2C_ARGS = (
     'aria2c:'
-    '-x 4 '                        # 4 connections per server (free-tier safe)
-    '-s 4 '                        # 4 splits per file
-    '-j 4 '                        # 4 parallel fragment downloads
-    '--min-split-size=1M '         # less fragmentation → lower CPU load
-    '--disk-cache=64M '            # low RAM usage for free tier
+    '-x 16 '                       # 16 connections per server (max)
+    '-s 16 '                       # 16 splits per file (max)
+    '-j 16 '                       # 16 parallel fragment downloads (max)
+    '--min-split-size=512K '       # smaller splits = more parallelism
+    '--disk-cache=256M '           # large cache for maximum throughput
     '--file-allocation=none '
     '--enable-http-pipelining=true '
     '--http-accept-gzip=true '
     '--max-tries=0 '
-    '--retry-wait=2 '
-    '--piece-length=1M'
+    '--retry-wait=1 '              # retry faster
+    '--piece-length=512K'          # smaller pieces = more parallel chunks
 )
 _YTDLP_EXTRA = (
-    '-R 10 '
-    '--fragment-retries 10 '
-    '--concurrent-fragments 4 '    # 4 concurrent — free-tier safe
-    '--socket-timeout 30 '
+    '-R 0 '                        # infinite retries
+    '--fragment-retries 0 '        # infinite fragment retries
+    '--concurrent-fragments 16 '   # 16 concurrent fragments (max)
+    '--socket-timeout 15 '         # faster timeout → quicker retry
+    '--buffer-size 16K '           # larger read buffer
+    '--http-chunk-size 10M '       # larger chunk per request
+    '--throttled-rate 100K '       # auto-retry if speed drops below 100KB/s
     '--no-part '
     '--js-runtimes node '
     '--remote-components ejs:github '
