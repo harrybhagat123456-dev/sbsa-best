@@ -1,0 +1,95 @@
+Here's the full breakdown in English:
+
+---
+
+## 🔍 Root Cause
+
+Your bot (`drm_handler.py`) crashes when it receives `'001-002'` because it tries to do `int('001-002')` — Python can't convert a range string to an integer.
+
+The error happens at **3 places** in your `modules/drm_handler.py`:
+- **Line ~112:** `if int(raw_text) > len(links):`
+- **Line ~213:** `count = int(raw_text)`
+- **Line ~550:** `success_count = len(links) - int(raw_text) - failed_count + 1`
+
+## 📊 Why UDAY works but Sankalp doesn't
+
+| | Sankalp file ❌ | UDAY file ✅ |
+|---|---|---|
+| **Format** | `(Category) Title: //url` | `Title://url` |
+| **Subject prefix** | `(Ethics, Integrity and Aptitude) Ethics 01:` | `Ethics 01:` |
+| **Extra text** | Has `No DMP:`, `Rescheduled @06:00 PM:` etc. | Cleaner, no extra metadata |
+
+The `()` parentheses in the Sankalp file confuse the bot's parser. When the bot asks the user for a number (like "resume from which point?"), it receives something like `001-002` from the misparsed text instead of a clean integer.
+
+---
+
+## 🛠️ Fix — Edit `modules/drm_handler.py` on Replit
+
+### Step 1: Add this helper function at the top of the file (after imports):
+
+```python
+def parse_number_or_range(raw_text):
+    """Parse '5', '001-002', '1-10' etc. Returns (start, end) tuple or None."""
+    raw_text = raw_text.strip()
+    if '-' in raw_text and not raw_text.startswith('-'):
+        parts = raw_text.split('-')
+        if len(parts) == 2:
+            try:
+                start = int(parts[0].strip())
+                end = int(parts[1].strip())
+                return (start, end)
+            except ValueError:
+                pass
+    try:
+        return (int(raw_text), int(raw_text))
+    except ValueError:
+        return None
+```
+
+### Step 2: Replace the 3 crashing `int(raw_text)` calls with this pattern:
+
+**At line ~112, change:**
+```python
+# OLD:
+if int(raw_text) > len(links):
+
+# NEW:
+parsed = parse_number_or_range(raw_text)
+if parsed is None:
+    await bot.send_message(m.chat.id, "⚠️ Invalid input. Send a number (e.g. 5) or range (e.g. 1-10).")
+    return
+start_num, end_num = parsed
+if start_num > len(links):
+```
+
+**At line ~213, change:**
+```python
+# OLD:
+count = int(raw_text)
+
+# NEW:
+parsed = parse_number_or_range(raw_text)
+if parsed is None:
+    await bot.send_message(m.chat.id, "⚠️ Invalid input.")
+    return
+count = parsed[0]
+```
+
+**At line ~550, change:**
+```python
+# OLD:
+success_count = len(links) - int(raw_text) - failed_count + 1
+
+# NEW:
+parsed = parse_number_or_range(raw_text)
+if parsed is None:
+    await bot.send_message(m.chat.id, "⚠️ Invalid input.")
+    return
+success_count = len(links) - parsed[0] - failed_count + 1
+```
+
+---
+
+## 🎯 Quicker Alternative
+
+If you don't want to touch the bot code, I can **generate a cleaned version of the Sankalp file** right now — removing the `(Category)` prefixes so it matches the format the bot already expects. Want me to do that?

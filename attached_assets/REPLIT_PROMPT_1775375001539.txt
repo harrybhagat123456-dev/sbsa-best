@@ -1,0 +1,801 @@
+# ============================================================
+# COMPLETE PROMPT FOR REPLIT AI AGENT
+# TELEGRAM TOPIC BOT v2 — UPGRADE WITH DATES + MINI APP
+# ============================================================
+# Copy everything below this line and paste into Replit Agent
+# ============================================================
+
+Build me a Node.js Telegram bot using the grammy library that does the following:
+
+---
+
+## WHAT THIS BOT DOES (OVERVIEW)
+
+This bot reads a text file containing categorized educational content links (videos, PDFs), creates Telegram forum topics in a supergroup, and uploads each link to the correct topic. After upload, it tracks batch dates and provides a monthly calendar navigation via a Telegram Mini App.
+
+---
+
+## EXISTING CODEBASE (YOU MUST UPGRADE THIS)
+
+I already have a working bot with 4 files. Here they are. You must keep all existing functionality working and UPGRADE it with the 3 new features described below.
+
+### FILE 1: package.json
+```json
+{
+  "name": "telegram-topic-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot that creates topics in a supergroup and routes video/PDF links from a text file to the correct topic",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "upload": "node index.js --upload"
+  },
+  "dependencies": {
+    "grammy": "^1.21.1",
+    "@grammyjs/types": "^3.4.1",
+    "dotenv": "^16.4.5"
+  }
+}
+```
+
+### FILE 2: parser.js
+```javascript
+const fs = require('fs');
+const path = require('path');
+
+class FileParser {
+  constructor(filePath) {
+    this.filePath = filePath;
+    this.entries = [];
+    this.topics = new Map();
+  }
+
+  parse(startLine = 0) {
+    if (!fs.existsSync(this.filePath)) {
+      throw new Error(`File not found: ${this.filePath}`);
+    }
+    const content = fs.readFileSync(this.filePath, 'utf-8');
+    const lines = content.split('\n').filter(line => line.trim().length > 0);
+    console.log(`Total lines in file: ${lines.length}`);
+    console.log(`Starting from line: ${startLine}`);
+    for (let i = startLine; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      const parsed = this.parseLine(line, i);
+      if (parsed) {
+        this.entries.push(parsed);
+        if (!this.topics.has(parsed.topic)) {
+          this.topics.set(parsed.topic, []);
+        }
+        this.topics.get(parsed.topic).push(parsed);
+      }
+    }
+    console.log(`Parsed ${this.entries.length} entries across ${this.topics.size} topics`);
+    return { entries: this.entries, topics: this.topics, totalLines: lines.length, parsedFromLine: startLine };
+  }
+
+  parseLine(line, lineNumber) {
+    // OLD FORMAT: (Topic) Title: //url
+    const match = line.match(/^\((.+?)\)\s*(.+?):\s*\/\/(.+)$/);
+    if (!match) {
+      const altMatch = line.match(/^\((.+?)\)\s*(.+?)\s*\/\/(.+)$/);
+      if (altMatch) {
+        return {
+          topic: altMatch[1].trim(),
+          title: altMatch[2].trim(),
+          url: '//' + altMatch[3].trim(),
+          fullLine: line,
+          lineNumber: lineNumber,
+          type: this.detectType('//' + altMatch[3].trim())
+        };
+      }
+      return null;
+    }
+    const topic = match[1].trim();
+    const title = match[2].trim();
+    const url = '//' + match[3].trim();
+    return { topic, title, url, fullLine: line, lineNumber, type: this.detectType(url) };
+  }
+
+  detectType(url) {
+    if (url.includes('.mpd') || url.includes('youtube.com/embed')) return 'video';
+    else if (url.includes('.pdf')) return 'pdf';
+    else return 'link';
+  }
+
+  getTopicSummary() {
+    const summary = [];
+    for (const [topic, entries] of this.topics) {
+      const videos = entries.filter(e => e.type === 'video').length;
+      const pdfs = entries.filter(e => e.type === 'pdf').length;
+      summary.push({ topic, total: entries.length, videos, pdfs });
+    }
+    return summary.sort((a, b) => b.total - a.total);
+  }
+}
+
+module.exports = FileParser;
+```
+
+### FILE 3: topicManager.js
+```javascript
+const { Bot, InlineKeyboard } = require('grammy');
+
+class TopicManager {
+  constructor(botToken, groupId) {
+    this.bot = new Bot(botToken);
+    this.groupId = parseInt(groupId);
+    this.topicThreadIds = new Map();
+    this.rateLimitCount = 0;
+    this.lastResetTime = Date.now();
+  }
+
+  async initialize() {
+    try {
+      const botInfo = await this.bot.api.getMe();
+      console.log(`Bot: @${botInfo.username} (${botInfo.first_name})`);
+      const chat = await this.bot.api.getChat(this.groupId);
+      console.log(`Group: ${chat.title}`);
+      if (chat.is_forum) console.log('Forum/Topics mode is ENABLED');
+      else console.log('WARNING: Forum/Topics mode is NOT enabled!');
+      return true;
+    } catch (error) {
+      console.error('Failed to initialize bot:', error.message);
+      return false;
+    }
+  }
+
+  async createTopic(topicName, emoji = '📁') {
+    if (this.topicThreadIds.has(topicName)) return this.topicThreadIds.get(topicName);
+    try {
+      const result = await this.bot.api.createForumTopic(this.groupId, topicName, {
+        icon_custom_emoji_id: '',
+        icon_color: this.getTopicColor(topicName)
+      });
+      try {
+        await this.bot.api.sendMessage(this.groupId, `${emoji} **${topicName}**`, {
+          message_thread_id: result.message_thread_id,
+          parse_mode: 'Markdown'
+        });
+      } catch (e) {}
+      this.topicThreadIds.set(topicName, result.message_thread_id);
+      await this.sleep(1500);
+      return result.message_thread_id;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  getTopicColor(topicName) {
+    const colors = [0x6FB9F0, 0xFFD67E, 0xCB86DB, 0x8EEE98, 0xFF93B2, 0xFB6F5F];
+    let hash = 0;
+    for (let i = 0; i < topicName.length; i++) hash = topicName.charCodeAt(i) + ((hash << 5) - hash);
+    return colors[Math.abs(hash) % colors.length];
+  }
+
+  async sendToTopic(topicName, entry) {
+    let threadId = this.topicThreadIds.get(topicName);
+    if (!threadId) {
+      const emoji = this.getTopicEmoji(topicName);
+      threadId = await this.createTopic(topicName, emoji);
+      if (!threadId) return false;
+    }
+    const message = this.buildMessage(entry);
+    try {
+      await this.checkRateLimit();
+      const sent = await this.bot.api.sendMessage(this.groupId, message.text, {
+        message_thread_id: threadId,
+        parse_mode: 'HTML',
+        disable_web_page_preview: entry.type === 'pdf'
+      });
+      this.messagesSent++;
+      return sent; // IMPORTANT: Return the sent message object so we can get message_id
+    } catch (error) {
+      if (error.message.includes('thread') || error.message.includes('topic')) {
+        this.topicThreadIds.delete(topicName);
+        const emoji = this.getTopicEmoji(topicName);
+        threadId = await this.createTopic(topicName, emoji);
+        if (threadId) {
+          try {
+            const sent = await this.bot.api.sendMessage(this.groupId, message.text, {
+              message_thread_id: threadId,
+              parse_mode: 'HTML',
+              disable_web_page_preview: entry.type === 'pdf'
+            });
+            this.messagesSent++;
+            return sent;
+          } catch (retryError) { return false; }
+        }
+      }
+      return false;
+    }
+  }
+
+  buildMessage(entry) {
+    let icon;
+    switch (entry.type) {
+      case 'video': icon = '🎬'; break;
+      case 'pdf': icon = '📄'; break;
+      default: icon = '🔗';
+    }
+    let cleanUrl = entry.url;
+    if (cleanUrl.startsWith('//')) cleanUrl = 'https:' + cleanUrl;
+    const dateStr = entry.date ? `\n📅 ${entry.date}` : '';
+    const text = `${icon} <b>${this.escapeHtml(entry.title)}</b>${dateStr}\n<a href="${cleanUrl}">${this.getUrlLabel(entry)}</a>`;
+    return { text, url: cleanUrl };
+  }
+
+  getUrlLabel(entry) {
+    switch (entry.type) {
+      case 'video': return '▶️ Watch Video';
+      case 'pdf': return '📕 View PDF';
+      default: return '🔗 Open Link';
+    }
+  }
+
+  escapeHtml(text) {
+    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  getTopicEmoji(topicName) {
+    const emojiMap = {
+      'Notices': '📢', 'Ethics, Integrity and Aptitude': '⚖️', 'Geography': '🌍',
+      'Polity': '🏛️', 'Economy': '💰', 'Science and Technology': '🔬', 'History': '📜',
+      'Current Affairs': '📰', 'Society, Social Issues, Social Justice': '👥', 'World History': '🗺️',
+      'Art & Culture': '🎨', 'International Relations': '🌐', 'Environment': '🌱',
+      'Ancient History': '🏛️', 'Governance': '📊', 'Post Independence': '🇮🇳',
+      'Medieval History': '⚔️', 'Internal Security': '🛡️', 'Disaster Management': '🚨',
+      'Essay': '✍️', 'Webinar': '🎓', 'Starter Kit': '🎒', 'Samvaad': '💬',
+    };
+    return emojiMap[topicName] || '📁';
+  }
+
+  async checkRateLimit() {
+    const now = Date.now();
+    if (now - this.lastResetTime > 1000) { this.rateLimitCount = 0; this.lastResetTime = now; }
+    this.rateLimitCount++;
+    if (this.rateLimitCount > 20) await this.sleep(1000);
+  }
+
+  stop() { this.bot.stop(); }
+  sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+}
+
+module.exports = TopicManager;
+```
+
+### FILE 4: index.js
+```javascript
+require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
+const FileParser = require('./parser');
+const TopicManager = require('./topicManager');
+
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const GROUP_ID = process.env.GROUP_ID;
+const INPUT_FILE = process.env.INPUT_FILE;
+const MESSAGE_DELAY = parseInt(process.env.MESSAGE_DELAY) || 1500;
+const BATCH_SIZE = parseInt(process.env.BATCH_SIZE) || 20;
+const BATCH_PAUSE = parseInt(process.env.BATCH_PAUSE) || 5000;
+const PROGRESS_FILE = './progress.json';
+
+function loadProgress() {
+  if (fs.existsSync(PROGRESS_FILE)) {
+    try { return JSON.parse(fs.readFileSync(PROGRESS_FILE, 'utf-8')); }
+    catch (e) { return { lastSentLine: 0, sentTopics: {}, totalSent: 0, startTime: null }; }
+  }
+  return { lastSentLine: 0, sentTopics: {}, totalSent: 0, startTime: null };
+}
+
+function saveProgress(progress) { fs.writeFileSync(PROGRESS_FILE, JSON.stringify(progress, null, 2)); }
+
+async function main() {
+  if (!BOT_TOKEN || BOT_TOKEN === 'YOUR_BOT_TOKEN_HERE') { console.error('BOT_TOKEN not set!'); process.exit(1); }
+  if (!GROUP_ID || GROUP_ID === 'YOUR_GROUP_ID_HERE') { console.error('GROUP_ID not set!'); process.exit(1); }
+  if (!INPUT_FILE) { console.error('INPUT_FILE not set!'); process.exit(1); }
+  if (process.argv.includes('--reset') && fs.existsSync(PROGRESS_FILE)) fs.unlinkSync(PROGRESS_FILE);
+
+  const parser = new FileParser(INPUT_FILE);
+  const progress = loadProgress();
+  const startLine = parseInt(process.env.RESUME_FROM_LINE) || progress.lastSentLine;
+  const { entries, topics, totalLines } = parser.parse(startLine);
+  if (entries.length === 0) { console.log('No new entries to upload.'); return; }
+
+  const manager = new TopicManager(BOT_TOKEN, GROUP_ID);
+  const initialized = await manager.initialize();
+  if (!initialized) { console.error('Failed to initialize bot.'); process.exit(1); }
+
+  for (const [topicName] of topics) {
+    const emoji = manager.getTopicEmoji(topicName);
+    await manager.createTopic(topicName, emoji);
+  }
+
+  manager.messagesSent = 0;
+  manager.totalMessages = entries.length;
+  progress.startTime = progress.startTime || new Date().toISOString();
+  let successCount = 0, failCount = 0, batchCount = 0;
+
+  for (const entry of entries) {
+    const success = await manager.sendToTopic(entry.topic, entry);
+    if (success) {
+      successCount++;
+      progress.lastSentLine = entry.lineNumber + 1;
+      if (successCount % 10 === 0) saveProgress(progress);
+    } else { failCount++; }
+    batchCount++;
+    if (batchCount >= BATCH_SIZE) { await new Promise(r => setTimeout(r, BATCH_PAUSE)); batchCount = 0; }
+    else { await new Promise(r => setTimeout(r, MESSAGE_DELAY)); }
+  }
+
+  console.log(`Done! Sent: ${successCount}, Failed: ${failCount}`);
+  saveProgress(progress);
+  manager.stop();
+}
+
+main().catch(err => { console.error('Fatal error:', err); process.exit(1); });
+```
+
+### FILE 5: .env.example
+```
+BOT_TOKEN=YOUR_BOT_TOKEN_HERE
+GROUP_ID=YOUR_GROUP_ID_HERE
+INPUT_FILE=./input.txt
+MESSAGE_DELAY=1500
+BATCH_SIZE=20
+BATCH_PAUSE=5000
+RESUME_FROM_LINE=0
+```
+
+---
+
+## 3 NEW FEATURES TO ADD (UPGRADE)
+
+### =====================================================================
+### FEATURE 1: NEW INPUT FORMAT WITH DATES
+### =====================================================================
+
+The bot currently parses OLD FORMAT lines like:
+```
+(Notices) How to give Test?: //www.youtube.com/embed/B-GJShJlViI&parentId=...
+```
+
+Now I will ALSO be feeding it a NEW FORMAT with dates embedded. The new format is:
+```
+[Topic]{DATE-DD-Month-YYYY}Title of content: //url-to-video-or-pdf
+```
+
+EXAMPLES of the new format:
+```
+[Ethics]{DATE-10-March-2025}Ethics 01: What is Ethics: //d1d34p8vz63oiq.cloudfront.net/abc/master.mpd&parentId=xxx&childId=yyy
+[Geography]{DATE-15-April-2025}Geography 05 - Class Notes.pdf: //static.pw.live/abc/notes.pdf
+[Polity]{DATE-22-January-2025}Polity 12: Parliament: //www.youtube.com/embed/XYZ&parentId=xxx&childId=yyy
+[Notices]{DATE-05-May-2025}New Feature Update: //d1d34p8vz63oiq.cloudfront.net/abc/master.mpd&parentId=xxx
+```
+
+WHAT CHANGES IN PARSER.JS:
+- The `parseLine()` method must support BOTH formats:
+  - OLD: `(Topic) Title: //url`  (keep working exactly as before)
+  - NEW: `[Topic]{DATE-DD-Month-YYYY}Title: //url`
+- For the NEW format, extract:
+  - `topic`: the text inside `[ ]`
+  - `date`: the date string inside `{DATE-...}`, parse it into a proper JS Date object AND a formatted string like "10 March 2025"
+  - `title`: the text after `}` and before `:`
+  - `url`: everything after `//` (same as before)
+- The returned entry object for new format should include an extra `date` field:
+  ```javascript
+  {
+    topic: "Ethics",
+    date: "10 March 2025",        // formatted human-readable string
+    dateISO: "2025-03-10",         // ISO format for sorting/grouping
+    dateObj: Date object,           // JS Date for comparisons
+    title: "Ethics 01: What is Ethics",
+    url: "//d1d34p8vz63oiq.cloudfront.net/...",
+    fullLine: "...",
+    lineNumber: 5,
+    type: "video"
+  }
+  ```
+- For OLD format entries, set `date: null`, `dateISO: null`, `dateObj: null`
+- The regex for NEW format should be: `^\[(.+?)\]\{DATE-(\d{1,2})-(\w+)-(\d{4})\}\s*(.+?):\s*\/\/(.+)$`
+  - Also handle alternate without colon: `^\[(.+?)\]\{DATE-(\d{1,2})-(\w+)-(\d{4})\}\s*(.+?)\s*\/\/(.+)$`
+- Parse the month name (March, April, January etc.) into a month number
+- Handle both full month names ("March") and abbreviated ("Mar")
+
+WHAT CHANGES IN topicManager.js buildMessage():
+- When an entry has a `date` field, display it in the message like:
+  ```
+  🎬 **Ethics 01: What is Ethics**
+  📅 10 March 2025
+  ▶️ Watch Video
+  ```
+- When no date, keep message format exactly as before (no date line)
+
+### =====================================================================
+### FEATURE 2: BATCH START DATE & END DATE REPORTING
+### =====================================================================
+
+After the upload finishes completely, the bot should:
+1. Look at ALL successfully uploaded entries that have a date
+2. Find the EARLIEST date → this is the **Batch Start Date**
+3. Find the LATEST date → this is the **Batch End Date**
+4. Print this to console AND save it in progress.json
+
+In the console output after upload, add:
+```
+============================================
+  BATCH DATES
+============================================
+📅 Batch Start Date: 10 March 2025
+📅 Batch End Date:   22 May 2025
+📊 Total Days Span:  73 days
+📊 Months Covered:   March 2025, April 2025, May 2025
+============================================
+```
+
+Also save in progress.json:
+```json
+{
+  "lastSentLine": 500,
+  "sentTopics": { ... },
+  "totalSent": 500,
+  "startTime": "...",
+  "batchStartDate": "10 March 2025",
+  "batchEndDate": "22 May 2025",
+  "batchStartDateISO": "2025-03-10",
+  "batchEndDateISO": "2025-05-22",
+  "monthsCovered": ["2025-03", "2025-04", "2025-05"]
+}
+```
+
+### =====================================================================
+### FEATURE 3: TELEGRAM MINI APP FOR MONTHLY/DATE NAVIGATION (MOST IMPORTANT)
+### =====================================================================
+
+THIS IS THE BIGGEST FEATURE. Read carefully.
+
+#### WHAT THE USER EXPERIENCE SHOULD BE:
+
+After the upload finishes, the bot sends a message in the General/Notices topic of the group with:
+- A header saying "📅 **Batch Calendar — Content Navigator**"
+- Batch start date and end date
+- A list of ALL months that have content, shown as clickable InlineKeyboard buttons
+- Each month button shows the month name + count of entries in that month
+- Example:
+
+```
+📅 Batch Calendar — Content Navigator
+━━━━━━━━━━━━━━━━━━━━
+From: 10 March 2025 → To: 22 May 2025
+
+Tap a month to browse content by date 👇
+```
+
+Below that message, there should be an InlineKeyboard with buttons like:
+```
+[ 📅 March 2025 (145 items) ]
+[ 📅 April 2025 (230 items)  ]
+[ 📅 May 2025  (127 items)   ]
+```
+
+When user taps "March 2025 (145 items)":
+- It opens a **Telegram Mini App** (Web App)
+- The Mini App shows a beautiful calendar/grid of ALL DATES in March 2025 that have content
+- Each date is a clickable card/button showing the date and number of items on that date
+- Example layout in the Mini App:
+
+```
+📅 March 2025 — 145 items
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+┌─────────────────────────┐
+│  1 March (5 items)       │  ← clickable
+├─────────────────────────┤
+│  2 March (8 items)       │  ← clickable
+├─────────────────────────┤
+│  3 March (12 items)      │  ← clickable
+├─────────────────────────┤
+│  ...                     │
+│  10 March (15 items)     │  ← clickable
+│  ...                     │
+│  31 March (3 items)      │  ← clickable
+└─────────────────────────┘
+```
+
+When user taps a date card like "10 March (15 items)":
+- The Mini App sends a callback query back to the bot
+- The bot then sends a message (or edits the Mini App) showing ALL content for that date, grouped by topic
+- Each content item is shown with its title, topic name, and a deep link to the actual message in the Telegram group topic
+
+Example after clicking "10 March":
+```
+📅 10 March 2025 — 15 items
+
+⚖️ Ethics, Integrity and Aptitude:
+  🎬 Ethics 01: What is Ethics
+     → [Open in Group](tg://privatepost?channel=GROUP_ID&post=MSG_ID&thread=THREAD_ID)
+
+  📄 Ethics 01 - Class Notes
+     → [Open in Group](tg://privatepost?channel=GROUP_ID&post=MSG_ID&thread=THREAD_ID)
+
+🌍 Geography:
+  🎬 Geography 05: Climate
+     → [Open in Group](tg://privatepost?channel=GROUP_ID&post=MSG_ID&thread=THREAD_ID)
+```
+
+The `tg://privatepost?channel=GROUP_ID&post=MSG_ID&thread=THREAD_ID` deep link opens Telegram and jumps directly to that specific message in the specific topic thread.
+
+#### TECHNICAL IMPLEMENTATION DETAILS:
+
+**A) Data Storage (messageIdTracker.js — new file):**
+
+Create a new module that stores the mapping of:
+- date → topic → [{ title, message_id, thread_id, url, type }]
+
+This data MUST be saved to a JSON file (`./messageIds.json`) so it persists across restarts.
+
+Structure of messageIds.json:
+```json
+{
+  "batchInfo": {
+    "startDate": "10 March 2025",
+    "endDate": "22 May 2025",
+    "totalItems": 502
+  },
+  "byDate": {
+    "2025-03-10": {
+      "Ethics, Integrity and Aptitude": [
+        {
+          "title": "Ethics 01: What is Ethics",
+          "message_id": 12345,
+          "thread_id": 456,
+          "url": "https://...",
+          "type": "video",
+          "date": "10 March 2025"
+        }
+      ],
+      "Geography": [...]
+    },
+    "2025-03-15": { ... }
+  },
+  "byMonth": {
+    "2025-03": {
+      "label": "March 2025",
+      "dates": ["2025-03-10", "2025-03-15", ...],
+      "totalItems": 145
+    }
+  }
+}
+```
+
+Every time `sendToTopic()` successfully sends a message, the returned `sent` message object contains `sent.message_id`. You MUST capture this and store it in the tracker.
+
+Update topicManager.js `sendToTopic()` to return the full sent message object (it currently does in the code above, but make sure).
+
+**B) Update index.js to track message IDs:**
+
+After each successful send, call the tracker to record:
+```javascript
+if (success && success.message_id) {
+  messageIdTracker.recordMessage(entry, success.message_id, threadId);
+}
+```
+
+After upload completes, call:
+```javascript
+await messageIdTracker.saveToFile('./messageIds.json');
+```
+
+Then send the calendar message with inline keyboard to the group.
+
+**C) Telegram Mini App (webapp/ folder — new files):**
+
+Create a `webapp/` folder containing:
+- `webapp/index.html` — the main HTML page for the Mini App
+- `webapp/style.css` — beautiful CSS styling (mobile-first, Telegram theme colors)
+- `webapp/app.js` — JavaScript for the Mini App logic
+
+The Mini App will:
+1. Be served via a simple HTTP server (use Express.js or grammy's built-in webhook)
+2. Receive the selected month via URL query parameter: `?month=2025-03&token=BOT_TOKEN`
+3. Fetch the message data from the bot's API endpoint: `GET /api/calendar?month=2025-03`
+4. Display dates as clickable cards
+5. When a date is clicked, fetch data: `GET /api/calendar?month=2025-03&date=2025-03-10`
+6. Show content items with deep links
+
+For serving the webapp, add Express to dependencies and create a small server in `server.js`:
+```javascript
+const express = require('express');
+const app = express();
+app.use(express.static('./webapp'));
+app.get('/api/calendar', (req, res) => {
+  // read messageIds.json and return filtered data
+});
+app.listen(3000, () => console.log('Mini App server running on port 3000'));
+```
+
+IMPORTANT: On Replit, use the Replit port forwarding. The web app URL should be configured in @BotFather using `/newapp` or `/setmenubutton`.
+
+**D) Bot Commands and Handlers:**
+
+Add these to index.js or a new `botHandlers.js` file:
+
+1. `/calendar` command — Resends the month picker inline keyboard message
+2. Callback query handler for month buttons — opens the Mini App URL
+3. The bot must use `bot.api.sendMessage()` with `reply_markup` containing InlineKeyboardMarkup
+
+The inline keyboard for months should look like:
+```javascript
+const monthButtons = months.map(m => {
+  const data = JSON.stringify({ action: 'month', month: m.key });
+  return [InlineKeyboard.text(`📅 ${m.label} (${m.totalItems} items)`, data)];
+});
+const keyboard = new InlineKeyboard(monthButtons);
+```
+
+When the callback query with action "month" is received, answer with:
+```javascript
+ctx.answerCallbackQuery({
+  url: `https://your-replit-app-url.replit.app/index.html?month=${month}`
+});
+```
+
+This opens the Mini App in Telegram.
+
+**E) Mini App UI Design Requirements:**
+
+The webapp/index.html should be:
+- Mobile-first (Telegram Mini Apps open on phones)
+- Use Telegram's color scheme (dark/light theme support via `tg.getThemeParams()`)
+- Beautiful card-based layout for dates
+- Smooth animations
+- Show a back button to go back to month selection
+- Use the Telegram Web App SDK (`telegram-web-app.js` from CDN)
+
+The HTML structure:
+```html
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Batch Calendar</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <div id="month-view">
+      <h2 id="month-title">March 2025</h2>
+      <div id="date-grid"></div>
+    </div>
+    <div id="date-view" style="display:none">
+      <button id="back-btn">← Back to dates</button>
+      <h2 id="date-title">10 March 2025</h2>
+      <div id="content-list"></div>
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
+```
+
+The CSS should use:
+- CSS variables from `Telegram.WebApp.themeParams`
+- Card shadows, rounded corners (12px), proper padding
+- Font: system-ui or Telegram's default
+- Accent colors from theme
+
+The JavaScript (app.js) should:
+- Initialize Telegram Web App SDK
+- Get month from URL params
+- Fetch `/api/calendar?month=XXXX` 
+- Render date cards
+- On date click, fetch `/api/calendar?month=XXXX&date=YYYY-MM-DD`
+- Render content list with deep links
+- Use `Telegram.WebApp.openTelegramLink(deepLink)` for navigation
+
+Deep link format for opening a specific message in a topic:
+```
+tg://privatepost?channel=-100XXXXXXXXXX&post=MESSAGE_ID&thread=THREAD_ID
+```
+
+Where:
+- `channel` = the GROUP_ID (with -100 prefix)
+- `post` = the message_id of the sent content
+- `thread` = the thread_id (topic forum ID)
+
+**F) Additional Dependencies Needed:**
+
+Add to package.json:
+```json
+"dependencies": {
+  "grammy": "^1.21.1",
+  "@grammyjs/types": "^3.4.1",
+  "dotenv": "^16.4.5",
+  "express": "^4.18.2"
+}
+```
+
+---
+
+## COMPLETE FILE LIST AFTER UPGRADE
+
+The final project should have these files:
+
+1. `package.json` — updated with express dependency
+2. `.env.example` — updated with new config options
+3. `parser.js` — UPGRADED to support new [Topic]{DATE-...} format
+4. `topicManager.js` — UPGRADED to return sent message objects, show dates in messages
+5. `index.js` — UPGRADED with message ID tracking, batch date reporting, calendar message, bot command handlers
+6. `messageIdTracker.js` — NEW: tracks date→topic→message_id mapping, saves to JSON
+7. `server.js` — NEW: Express server for Mini App hosting + API endpoints
+8. `webapp/index.html` — NEW: Mini App HTML with Telegram SDK
+9. `webapp/style.css` — NEW: Beautiful mobile-first CSS
+10. `webapp/app.js` — NEW: Mini App logic (fetch data, render, deep links)
+11. `README.md` — updated setup instructions including Mini App setup
+
+---
+
+## IMPORTANT NOTES FOR THE AI AGENT
+
+1. **Keep backward compatibility**: The OLD format `(Topic) Title: //url` MUST still work exactly as before. The parser should detect which format each line uses.
+
+2. **Rate limiting**: Keep all existing rate limiting. Do not remove it.
+
+3. **Progress tracking**: Keep existing progress.json resume functionality.
+
+4. **The sendToTopic method MUST return the full sent message object** (not just true/false), because we need `message_id` for the deep linking.
+
+5. **The Mini App URL**: On Replit, the Express server will run on port 3000 (or whatever Replit provides). Use `process.env.PORT || 3000`. The Mini App URL to configure in @BotFather will be `https://your-project-name.replit.app`.
+
+6. **For @BotFather setup**: Tell the user to run:
+   - `/newapp` → creates a Web App
+   - Set the URL to their Replit app URL
+   - `/setmenubutton` → set the menu button to open the Web App
+
+7. **The deep link format `tg://privatepost`** requires the group to be a supergroup and the message to exist. Test this carefully.
+
+8. **Data file messageIds.json** can get large. Make sure to save it after every batch (every 20 messages), not just at the end.
+
+9. **The bot should work in two modes**:
+   - `npm start` or `npm run upload` — runs the upload process (creates topics, sends messages, builds calendar)
+   - After upload, the Express server for the Mini App stays running
+   - If user runs `npm start` again and everything is already uploaded, it should just start the Mini App server and bot handlers (not re-upload)
+
+10. **Handle the /calendar command**: When user types /calendar in any topic, the bot replies with the month picker inline keyboard.
+
+11. **Also handle callback queries**: When user taps a month button, open the Mini App with that month pre-selected.
+
+---
+
+## SUMMARY OF WHAT TO BUILD
+
+1. Upgrade parser.js → support NEW format `[Topic]{DATE-DD-Month-YYYY}Title: //url`
+2. Upgrade topicManager.js → show dates in messages, return full sent message objects
+3. Create messageIdTracker.js → save date→message_id mapping to messageIds.json
+4. Create server.js → Express server hosting Mini App + /api/calendar endpoint
+5. Create webapp/ (HTML + CSS + JS) → beautiful Telegram Mini App for browsing by month → date → content → deep link to group message
+6. Upgrade index.js → integrate everything, send calendar message after upload, add /calendar command handler
+7. After upload: show batch start/end dates in console, send month picker inline keyboard to group, Mini App lets user navigate months → dates → content items → opens specific message in group topic
+
+---
+
+## CONFIGURATION (.env.example updated)
+
+```
+BOT_TOKEN=YOUR_BOT_TOKEN_HERE
+GROUP_ID=YOUR_GROUP_ID_HERE
+INPUT_FILE=./input.txt
+MESSAGE_DELAY=1500
+BATCH_SIZE=20
+BATCH_PAUSE=5000
+RESUME_FROM_LINE=0
+WEBAPP_URL=https://your-project.replit.app
+```
+
+The WEBAPP_URL is the URL of your Replit app (for the Mini App). Set it after deploying.
+
+---
+
+Build this entire project. Make sure all files work together. Test the parser with both old and new format lines. Make the Mini App look really good with proper Telegram theming. Ensure deep links work for navigating to specific messages in topics.

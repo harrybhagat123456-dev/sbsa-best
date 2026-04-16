@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Batch Calendar</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+
+    <!-- Month overview (when no ?month param) -->
+    <div id="overview-view">
+      <div class="header">
+        <div class="header-icon">📅</div>
+        <h1 class="header-title">Batch Calendar</h1>
+        <p class="header-sub" id="overview-range"></p>
+      </div>
+      <div id="month-grid" class="grid"></div>
+    </div>
+
+    <!-- Date list view (for a selected month) -->
+    <div id="month-view" style="display:none">
+      <div class="topbar">
+        <button class="back-btn" id="back-to-overview">← Months</button>
+        <h2 id="month-title" class="topbar-title"></h2>
+      </div>
+      <div id="date-grid" class="grid"></div>
+    </div>
+
+    <!-- Content list view (for a selected date) -->
+    <div id="date-view" style="display:none">
+      <div class="topbar">
+        <button class="back-btn" id="back-to-month">← Back</button>
+        <h2 id="date-title" class="topbar-title"></h2>
+      </div>
+      <div id="content-list"></div>
+    </div>
+
+    <div id="loading" class="loading-screen">
+      <div class="spinner"></div>
+      <p>Loading calendar…</p>
+    </div>
+
+    <div id="error-screen" class="error-screen" style="display:none">
+      <div class="error-icon">⚠️</div>
+      <p id="error-msg">Something went wrong.</p>
+    </div>
+
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
