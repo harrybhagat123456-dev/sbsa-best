@@ -1330,8 +1330,8 @@ async def _drm_handler_impl(bot: Client, m: Message):
                             download_cmd = f'{cmd} {helper._YTDLP_EXTRA}'
                             _proc = await asyncio.create_subprocess_shell(
                                 download_cmd,
-                                stdout=asyncio.subprocess.DEVNULL,
-                                stderr=asyncio.subprocess.DEVNULL,
+                                stdout=None,
+                                stderr=None,
                             )
                             await _proc.wait()
                             # Use safe upload
@@ -1376,8 +1376,8 @@ async def _drm_handler_impl(bot: Client, m: Message):
                         download_cmd = f'{cmd} {helper._YTDLP_EXTRA}'
                         _proc = await asyncio.create_subprocess_shell(
                             download_cmd,
-                            stdout=asyncio.subprocess.DEVNULL,
-                            stderr=asyncio.subprocess.DEVNULL,
+                            stdout=None,
+                            stderr=None,
                         )
                         await _proc.wait()
                         # Use safe upload
@@ -1403,8 +1403,8 @@ async def _drm_handler_impl(bot: Client, m: Message):
                         download_cmd = f'{cmd} {helper._YTDLP_EXTRA}'
                         _proc = await asyncio.create_subprocess_shell(
                             download_cmd,
-                            stdout=asyncio.subprocess.DEVNULL,
-                            stderr=asyncio.subprocess.DEVNULL,
+                            stdout=None,
+                            stderr=None,
                         )
                         await _proc.wait()
                         # Use safe upload
