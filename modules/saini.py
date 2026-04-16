@@ -47,6 +47,8 @@ _YTDLP_EXTRA = (
     '--buffer-size 16K '           # larger read buffer
     '--http-chunk-size 10M '       # larger chunk per request
     '--throttled-rate 100K '       # auto-retry if speed drops below 100KB/s
+    '--progress '                  # always show progress
+    '--newline '                   # one line per progress update (console-friendly)
     '--no-part '
     '--js-runtimes node '
     '--remote-components ejs:github '
@@ -210,7 +212,7 @@ async def decrypt_and_merge_video(mpd_url, keys_string, output_path, output_name
 
         cmd1 = f'yt-dlp -f "bv[height<={quality}]+ba/b" -o "{output_path}/file.%(ext)s" --allow-unplayable-format --no-check-certificate {_YTDLP_EXTRA} "{mpd_url}"'
         print(f"Running command: {cmd1}")
-        _p1 = await asyncio.create_subprocess_shell(cmd1, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        _p1 = await asyncio.create_subprocess_shell(cmd1, stdout=None, stderr=None)
         await _p1.wait()
 
         avDir = list(output_path.iterdir())
@@ -224,7 +226,7 @@ async def decrypt_and_merge_video(mpd_url, keys_string, output_path, output_name
             if data.suffix == ".mp4" and not video_decrypted:
                 cmd2 = f'mp4decrypt {keys_string} --show-progress "{data}" "{output_path}/video.mp4"'
                 print(f"Running command: {cmd2}")
-                _p2 = await asyncio.create_subprocess_shell(cmd2, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+                _p2 = await asyncio.create_subprocess_shell(cmd2, stdout=None, stderr=None)
                 await _p2.wait()
                 if (output_path / "video.mp4").exists():
                     video_decrypted = True
@@ -232,7 +234,7 @@ async def decrypt_and_merge_video(mpd_url, keys_string, output_path, output_name
             elif data.suffix == ".m4a" and not audio_decrypted:
                 cmd3 = f'mp4decrypt {keys_string} --show-progress "{data}" "{output_path}/audio.m4a"'
                 print(f"Running command: {cmd3}")
-                _p3 = await asyncio.create_subprocess_shell(cmd3, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+                _p3 = await asyncio.create_subprocess_shell(cmd3, stdout=None, stderr=None)
                 await _p3.wait()
                 if (output_path / "audio.m4a").exists():
                     audio_decrypted = True
@@ -243,7 +245,7 @@ async def decrypt_and_merge_video(mpd_url, keys_string, output_path, output_name
 
         cmd4 = f'ffmpeg -i "{output_path}/video.mp4" -i "{output_path}/audio.m4a" -c copy "{output_path}/{output_name}.mp4"'
         print(f"Running command: {cmd4}")
-        _p4 = await asyncio.create_subprocess_shell(cmd4, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        _p4 = await asyncio.create_subprocess_shell(cmd4, stdout=None, stderr=None)
         await _p4.wait()
         if (output_path / "video.mp4").exists():
             (output_path / "video.mp4").unlink()
@@ -313,17 +315,20 @@ async def download_video(url, cmd, name):
     download_cmd = f'{cmd} {_YTDLP_EXTRA}'
     global failed_counter, last_download_error
     last_download_error = ""
-    print(download_cmd)
+    print(f"[DOWNLOAD] Starting: {download_cmd}")
     logging.info(download_cmd)
     _proc = await asyncio.create_subprocess_shell(
         download_cmd,
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.PIPE,
+        stdout=None,   # stream directly to Render/console
+        stderr=None,   # stream directly to Render/console
     )
-    _, stderr = await _proc.communicate()
-    if stderr:
-        last_download_error = stderr.decode(errors="ignore").strip()[-800:]
+    await _proc.wait()
     k = _proc
+    if k.returncode != 0:
+        last_download_error = f"yt-dlp exited with code {k.returncode}"
+        print(f"[DOWNLOAD] Failed with code {k.returncode} for: {name}")
+    else:
+        print(f"[DOWNLOAD] Done: {name}")
     if "visionias" in cmd and k.returncode != 0 and failed_counter <= 10:
         failed_counter += 1
         await asyncio.sleep(5)
@@ -377,8 +382,8 @@ async def send_vid(bot: Client, m: Message, cc, filename, vidwatermark, thumb, n
         raise FileNotFoundError(f"Downloaded video file not found: {filename or name}")
     _tp = await asyncio.create_subprocess_shell(
         f'ffmpeg -y -ss 00:00:10 -i "{filename}" -vframes 1 -vf scale=320:-1 -q:v 5 "{filename}.jpg"',
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,
+        stdout=None,
+        stderr=None,
     )
     await _tp.wait()
     await prog.delete (True)
@@ -409,8 +414,8 @@ async def send_vid(bot: Client, m: Message, cc, filename, vidwatermark, thumb, n
             font_path = "vidwater.ttf"
             _wp = await asyncio.create_subprocess_shell(
                 f'ffmpeg -i "{filename}" -vf "drawtext=fontfile={font_path}:text=\'{vidwatermark}\':fontcolor=white@0.3:fontsize=h/6:x=(w-text_w)/2:y=(h-text_h)/2" -codec:a copy "{w_filename}"',
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
+                stdout=None,
+                stderr=None,
             )
             await _wp.wait()
             
