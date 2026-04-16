@@ -1,0 +1,31 @@
+app:
+  name: saini-drm-bot
+  services:
+    - name: telegram-bot
+      type: web
+      instance_type: nano
+      regions:
+        - fra
+      builder: dockerfile
+      dockerfile: Dockerfile
+      ports:
+        - port: 8000
+          protocol: http
+      health_checks:
+        - http:
+            port: 8000
+            path: /
+      env:
+        - name: API_ID
+          secret: API_ID
+        - name: API_HASH
+          secret: API_HASH
+        - name: BOT_TOKEN
+          secret: BOT_TOKEN
+        - name: OWNER
+          secret: OWNER
+        - name: CREDIT
+          value: "SAINI BOTS"
+      autoscaling:
+        min: 1
+        max: 1

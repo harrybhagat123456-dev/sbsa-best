@@ -1,0 +1,17 @@
+{
+  "name": "telegram-topic-bot",
+  "version": "2.0.0",
+  "description": "Telegram bot that creates topics in a supergroup and routes video/PDF links from a text file to the correct topic, with date tracking and Mini App calendar",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "upload": "node index.js --upload",
+    "server": "node server.js"
+  },
+  "dependencies": {
+    "@grammyjs/types": "^3.26.0",
+    "dotenv": "^16.6.1",
+    "express": "^4.22.1",
+    "grammy": "^1.42.0"
+  }
+}

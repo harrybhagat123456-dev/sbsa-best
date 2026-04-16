@@ -1,0 +1,96 @@
+{
+  "-1003863431886": {
+    "topics": {},
+    "txt_topics": {},
+    "default_topic": null,
+    "auto_create": true,
+    "category_mapping": {
+      "video": "videos",
+      "pdf": "pdfs",
+      "notice": "notices",
+      "upload": "uploads"
+    }
+  },
+  "-1003504373473": {
+    "topics": {},
+    "txt_topics": {},
+    "default_topic": null,
+    "auto_create": true,
+    "category_mapping": {
+      "video": "videos",
+      "pdf": "pdfs",
+      "notice": "notices",
+      "upload": "uploads"
+    }
+  },
+  "7385595817": {
+    "topics": {},
+    "txt_topics": {},
+    "default_topic": null,
+    "auto_create": true,
+    "category_mapping": {
+      "video": "videos",
+      "pdf": "pdfs",
+      "notice": "notices",
+      "upload": "uploads"
+    }
+  },
+  "-1003613868533": {
+    "topics": {},
+    "txt_topics": {},
+    "default_topic": null,
+    "auto_create": true,
+    "category_mapping": {
+      "video": "videos",
+      "pdf": "pdfs",
+      "notice": "notices",
+      "upload": "uploads"
+    }
+  },
+  "-1003822659204": {
+    "topics": {},
+    "txt_topics": {},
+    "default_topic": null,
+    "auto_create": true,
+    "category_mapping": {
+      "video": "videos",
+      "pdf": "pdfs",
+      "notice": "notices",
+      "upload": "uploads"
+    }
+  },
+  "-1003750615857": {
+    "txt_topic_mapping": {
+      "Arithmetic": 5,
+      "Advance/Class PNG": 7,
+      "Advance/Class Sheet": 9,
+      "Advance": 11,
+      "English/Class PNG": 13,
+      "English/Grammar Study Material": 27,
+      "English/Vocab Batch on App": 25,
+      "English/Comprehension Study Material": 23,
+      "English/Mixed & Previous Year Study Material": 21,
+      "English/Vocab Batch on YouTube": 19,
+      "English/Vocab (Live)": 17,
+      "English": 15,
+      "Reasoning/Class PNG": 29,
+      "Reasoning": 31,
+      "History/Detailed PDF Notes": 33,
+      "History": 35,
+      "Geography/Class Wise Board (PNG)": 37,
+      "Geography": 39,
+      "Polity": 41,
+      "Economy": 43,
+      "Physics/Detailed PDF Notes": 65,
+      "Physics": 63,
+      "Chemistry": 61,
+      "Biology/Detailed PDF Notes (Bilingual)": 59,
+      "Biology": 57,
+      "Static GK": 53,
+      "The Hindu Editorial": 51,
+      "Geometry Practice": 49,
+      "Current Affairs": 47,
+      "Computer": 45
+    }
+  }
+}

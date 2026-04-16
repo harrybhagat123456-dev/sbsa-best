@@ -1,0 +1,348 @@
+{
+  "channels": {
+    "-1003750615857": {
+      "topics": {
+        "33": {
+          "name": "History/Detailed PDF Notes",
+          "id": 33,
+          "link": "https://t.me/c/3750615857/33"
+        },
+        "19": {
+          "name": "English/Vocab Batch on YouTube",
+          "id": 19,
+          "link": "https://t.me/c/3750615857/19"
+        },
+        "25": {
+          "name": "English/Vocab Batch on App",
+          "id": 25,
+          "link": "https://t.me/c/3750615857/25"
+        },
+        "35": {
+          "name": "History",
+          "id": 35,
+          "link": "https://t.me/c/3750615857/35"
+        },
+        "29": {
+          "name": "Reasoning/Class PNG",
+          "id": 29,
+          "link": "https://t.me/c/3750615857/29"
+        },
+        "27": {
+          "name": "English/Grammar Study Material",
+          "id": 27,
+          "link": "https://t.me/c/3750615857/27"
+        },
+        "23": {
+          "name": "English/Comprehension Study Material",
+          "id": 23,
+          "link": "https://t.me/c/3750615857/23"
+        },
+        "17": {
+          "name": "English/Vocab (Live)",
+          "id": 17,
+          "link": "https://t.me/c/3750615857/17"
+        },
+        "15": {
+          "name": "English",
+          "id": 15,
+          "link": "https://t.me/c/3750615857/15"
+        },
+        "31": {
+          "name": "Reasoning",
+          "id": 31,
+          "link": "https://t.me/c/3750615857/31"
+        },
+        "13": {
+          "name": "English/Class PNG",
+          "id": 13,
+          "link": "https://t.me/c/3750615857/13"
+        },
+        "65": {
+          "name": "Physics/Detailed PDF Notes",
+          "id": 65,
+          "link": "https://t.me/c/3750615857/65"
+        },
+        "5": {
+          "name": "Arithmetic",
+          "id": 5,
+          "link": "https://t.me/c/3750615857/5"
+        },
+        "61": {
+          "name": "Chemistry",
+          "id": 61,
+          "link": "https://t.me/c/3750615857/61"
+        },
+        "57": {
+          "name": "Biology",
+          "id": 57,
+          "link": "https://t.me/c/3750615857/57"
+        },
+        "9": {
+          "name": "Advance/Class Sheet",
+          "id": 9,
+          "link": "https://t.me/c/3750615857/9"
+        },
+        "37": {
+          "name": "Geography/Class Wise Board (PNG)",
+          "id": 37,
+          "link": "https://t.me/c/3750615857/37"
+        },
+        "39": {
+          "name": "Geography",
+          "id": 39,
+          "link": "https://t.me/c/3750615857/39"
+        },
+        "41": {
+          "name": "Polity",
+          "id": 41,
+          "link": "https://t.me/c/3750615857/41"
+        },
+        "59": {
+          "name": "Biology/Detailed PDF Notes (Bilingual)",
+          "id": 59,
+          "link": "https://t.me/c/3750615857/59"
+        },
+        "53": {
+          "name": "Static GK",
+          "id": 53,
+          "link": "https://t.me/c/3750615857/53"
+        },
+        "49": {
+          "name": "Geometry Practice",
+          "id": 49,
+          "link": "https://t.me/c/3750615857/49"
+        },
+        "47": {
+          "name": "Current Affairs",
+          "id": 47,
+          "link": "https://t.me/c/3750615857/47"
+        },
+        "55": {
+          "name": "Biology",
+          "id": 55,
+          "link": "https://t.me/c/3750615857/55"
+        },
+        "11": {
+          "name": "Advance",
+          "id": 11,
+          "link": "https://t.me/c/3750615857/11"
+        },
+        "45": {
+          "name": "Computer",
+          "id": 45,
+          "link": "https://t.me/c/3750615857/45"
+        },
+        "51": {
+          "name": "The Hindu Editorial",
+          "id": 51,
+          "link": "https://t.me/c/3750615857/51"
+        },
+        "43": {
+          "name": "Economy",
+          "id": 43,
+          "link": "https://t.me/c/3750615857/43"
+        },
+        "63": {
+          "name": "Physics",
+          "id": 63,
+          "link": "https://t.me/c/3750615857/63"
+        },
+        "21": {
+          "name": "English/Mixed & Previous Year Study Material",
+          "id": 21,
+          "link": "https://t.me/c/3750615857/21"
+        },
+        "7": {
+          "name": "Advance/Class PNG",
+          "id": 7,
+          "link": "https://t.me/c/3750615857/7"
+        }
+      },
+      "last_updated": "2026-04-15T17:55:46.929975"
+    }
+  },
+  "mappings": {
+    "-1003750615857": {
+      "Arithmetic": {
+        "topic_id": 5,
+        "topic_name": "Arithmetic",
+        "topic_link": "https://t.me/c/3750615857/5",
+        "match_quality": "exact"
+      },
+      "Advance/Class PNG": {
+        "topic_id": 7,
+        "topic_name": "Advance/Class PNG",
+        "topic_link": "https://t.me/c/3750615857/7",
+        "match_quality": "exact"
+      },
+      "Advance/Class Sheet": {
+        "topic_id": 9,
+        "topic_name": "Advance/Class Sheet",
+        "topic_link": "https://t.me/c/3750615857/9",
+        "match_quality": "exact"
+      },
+      "Advance": {
+        "topic_id": 11,
+        "topic_name": "Advance",
+        "topic_link": "https://t.me/c/3750615857/11",
+        "match_quality": "exact"
+      },
+      "English/Class PNG": {
+        "topic_id": 13,
+        "topic_name": "English/Class PNG",
+        "topic_link": "https://t.me/c/3750615857/13",
+        "match_quality": "exact"
+      },
+      "English/Grammar Study Material": {
+        "topic_id": 27,
+        "topic_name": "English/Grammar Study Material",
+        "topic_link": "https://t.me/c/3750615857/27",
+        "match_quality": "exact"
+      },
+      "English/Vocab Batch on App": {
+        "topic_id": 25,
+        "topic_name": "English/Vocab Batch on App",
+        "topic_link": "https://t.me/c/3750615857/25",
+        "match_quality": "exact"
+      },
+      "English/Comprehension Study Material": {
+        "topic_id": 23,
+        "topic_name": "English/Comprehension Study Material",
+        "topic_link": "https://t.me/c/3750615857/23",
+        "match_quality": "exact"
+      },
+      "English/Mixed & Previous Year Study Material": {
+        "topic_id": 21,
+        "topic_name": "English/Mixed & Previous Year Study Material",
+        "topic_link": "https://t.me/c/3750615857/21",
+        "match_quality": "exact"
+      },
+      "English/Vocab Batch on YouTube": {
+        "topic_id": 19,
+        "topic_name": "English/Vocab Batch on YouTube",
+        "topic_link": "https://t.me/c/3750615857/19",
+        "match_quality": "exact"
+      },
+      "English/Vocab (Live)": {
+        "topic_id": 17,
+        "topic_name": "English/Vocab (Live)",
+        "topic_link": "https://t.me/c/3750615857/17",
+        "match_quality": "exact"
+      },
+      "English": {
+        "topic_id": 15,
+        "topic_name": "English",
+        "topic_link": "https://t.me/c/3750615857/15",
+        "match_quality": "exact"
+      },
+      "Reasoning/Class PNG": {
+        "topic_id": 29,
+        "topic_name": "Reasoning/Class PNG",
+        "topic_link": "https://t.me/c/3750615857/29",
+        "match_quality": "exact"
+      },
+      "Reasoning": {
+        "topic_id": 31,
+        "topic_name": "Reasoning",
+        "topic_link": "https://t.me/c/3750615857/31",
+        "match_quality": "exact"
+      },
+      "History/Detailed PDF Notes": {
+        "topic_id": 33,
+        "topic_name": "History/Detailed PDF Notes",
+        "topic_link": "https://t.me/c/3750615857/33",
+        "match_quality": "exact"
+      },
+      "History": {
+        "topic_id": 35,
+        "topic_name": "History",
+        "topic_link": "https://t.me/c/3750615857/35",
+        "match_quality": "exact"
+      },
+      "Geography/Class Wise Board (PNG)": {
+        "topic_id": 37,
+        "topic_name": "Geography/Class Wise Board (PNG)",
+        "topic_link": "https://t.me/c/3750615857/37",
+        "match_quality": "exact"
+      },
+      "Geography": {
+        "topic_id": 39,
+        "topic_name": "Geography",
+        "topic_link": "https://t.me/c/3750615857/39",
+        "match_quality": "exact"
+      },
+      "Polity": {
+        "topic_id": 41,
+        "topic_name": "Polity",
+        "topic_link": "https://t.me/c/3750615857/41",
+        "match_quality": "exact"
+      },
+      "Economy": {
+        "topic_id": 43,
+        "topic_name": "Economy",
+        "topic_link": "https://t.me/c/3750615857/43",
+        "match_quality": "exact"
+      },
+      "Physics/Detailed PDF Notes": {
+        "topic_id": 65,
+        "topic_name": "Physics/Detailed PDF Notes",
+        "topic_link": "https://t.me/c/3750615857/65",
+        "match_quality": "exact"
+      },
+      "Physics": {
+        "topic_id": 63,
+        "topic_name": "Physics",
+        "topic_link": "https://t.me/c/3750615857/63",
+        "match_quality": "exact"
+      },
+      "Chemistry": {
+        "topic_id": 61,
+        "topic_name": "Chemistry",
+        "topic_link": "https://t.me/c/3750615857/61",
+        "match_quality": "exact"
+      },
+      "Biology/Detailed PDF Notes (Bilingual)": {
+        "topic_id": 59,
+        "topic_name": "Biology/Detailed PDF Notes (Bilingual)",
+        "topic_link": "https://t.me/c/3750615857/59",
+        "match_quality": "exact"
+      },
+      "Biology": {
+        "topic_id": 57,
+        "topic_name": "Biology",
+        "topic_link": "https://t.me/c/3750615857/57",
+        "match_quality": "exact"
+      },
+      "Static GK": {
+        "topic_id": 53,
+        "topic_name": "Static GK",
+        "topic_link": "https://t.me/c/3750615857/53",
+        "match_quality": "exact"
+      },
+      "The Hindu Editorial": {
+        "topic_id": 51,
+        "topic_name": "The Hindu Editorial",
+        "topic_link": "https://t.me/c/3750615857/51",
+        "match_quality": "exact"
+      },
+      "Geometry Practice": {
+        "topic_id": 49,
+        "topic_name": "Geometry Practice",
+        "topic_link": "https://t.me/c/3750615857/49",
+        "match_quality": "exact"
+      },
+      "Current Affairs": {
+        "topic_id": 47,
+        "topic_name": "Current Affairs",
+        "topic_link": "https://t.me/c/3750615857/47",
+        "match_quality": "exact"
+      },
+      "Computer": {
+        "topic_id": 45,
+        "topic_name": "Computer",
+        "topic_link": "https://t.me/c/3750615857/45",
+        "match_quality": "exact"
+      }
+    }
+  }
+}
