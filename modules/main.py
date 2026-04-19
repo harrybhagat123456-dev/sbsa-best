@@ -34,7 +34,7 @@ from base64 import b64encode, b64decode
 from helper import *
 from config import API_ID, API_HASH, BOT_TOKEN
 
-OWNER = int(os.environ.get("OWNER", 5680454765))
+OWNER = int(os.environ.get("OWNER", 7385595817))
 cookies_file_path= "youtube_cookies.txt"
 # watermark_text = ""
 
