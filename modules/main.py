@@ -710,7 +710,7 @@ async def account_login(bot: Client, m: Message):
             elif "d1d34p8vz63oiq" in url or "sec1.pw.live" in url:
              id =  url.split("/")[-2]
              url = f"https://dl.alphacbse.site/download/{id}/master.m3u8"
-             #url = f"https://anonymouspwplayer-b99f57957198.herokuapp.com/pw?url={url}?token={PW}"
+             #url = f"https://anonymouspwplayerr-3cfbfedeb317.herokuapp.com/pw?url={url}&token={pw_token}"
              #url =  f"{api_url}pw-dl?url={url}&token={raw_text4}&authorization={api_token}&q={raw_text2}"
              #url = f"https://dl.alphacbse.site/download/{id}/master.m3u8"
             
