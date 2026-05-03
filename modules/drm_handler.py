@@ -2030,14 +2030,66 @@ async def history_drm_handler(bot: Client, m: Message):
     except Exception:
         pass
 
+    # ── Show resume scan result ───────────────────────────────────────────────
+    if is_resumable:
+        summary = get_history().get_progress_summary(file_hash)
+        prog    = summary.get("progress_percent", 0)
+        done    = summary.get("completed", 0)
+        total   = summary.get("total_links", len(raw_links))
+        scan_text = (
+            f"<b>♻️ Resumable Download Detected!</b>\n\n"
+            f"<blockquote>"
+            f"📂 <b>File:</b> <code>{file_name}</code>\n"
+            f"📊 <b>Progress:</b> {prog}% ({done}/{total} done)\n"
+            f"⏩ <b>Resume from:</b> link #{resume_index + 1}\n"
+            f"📚 <b>Batch:</b> <code>{stored_b_name or file_name.replace('_', ' ')}</code>"
+            f"</blockquote>"
+        )
+    else:
+        scan_text = (
+            f"<b>📥 New Download</b>\n\n"
+            f"<blockquote>"
+            f"📂 <b>File:</b> <code>{file_name}</code>\n"
+            f"🔗 <b>Links found:</b> {len(raw_links)}\n"
+            f"✨ No previous history — starting fresh."
+            f"</blockquote>"
+        )
+    await m.reply_text(scan_text, parse_mode=enums.ParseMode.HTML)
+
+    # ── Ask for destination chat ID / channel ─────────────────────────────────
+    dest_editable = await m.reply_text(
+        "<b>📢 Destination Chat</b>\n\n"
+        "<blockquote><i>Send the <b>Channel ID</b> or <b>Group ID</b> to upload to.\n"
+        "🔹 Make me an admin there first.\n"
+        "🔸 Use /id in the target chat to get its ID.\n"
+        "Example: <code>-100XXXXXXXXXXX</code>\n\n"
+        "Send /d to upload here instead.</i></blockquote>",
+        parse_mode=enums.ParseMode.HTML,
+    )
+    try:
+        dest_input: Message = await safe_listen(bot, m.chat.id, user_id, timeout=60)
+        if dest_input is None:
+            dest_raw = '/d'
+        else:
+            dest_raw = dest_input.text.strip()
+            await dest_input.delete(True)
+    except asyncio.TimeoutError:
+        dest_raw = '/d'
+    await dest_editable.delete()
+
+    if "/d" in dest_raw:
+        final_channel_id = m.chat.id
+    else:
+        final_channel_id = dest_raw
+
     # Set override so drm_handler knows what to do
     globals.history_override = {
-        "file_hash":   file_hash,
+        "file_hash":    file_hash,
         "is_resumable": is_resumable,
         "resume_index": resume_index,
-        "b_name":      stored_b_name or file_name.replace('_', ' '),
-        "channel_id":  stored_channel_id,   # None if first run
-        "topic_map":   stored_topic_map,    # {} if first run
+        "b_name":       stored_b_name or file_name.replace('_', ' '),
+        "channel_id":   final_channel_id,
+        "topic_map":    stored_topic_map,
     }
 
     # Hand off to drm_handler (it will re-download the file itself)
