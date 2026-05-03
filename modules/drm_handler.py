@@ -342,6 +342,71 @@ async def _drm_handler_impl(bot: Client, m: Message):
         with open(x, "r") as f:
             content = f.read()
         lines = content.split("\n")
+
+        # ── GLOBAL HISTORY AUTO-SCAN (runs on every .txt upload) ─────────────
+        # Only runs when /history command hasn't already set an override
+        if _HISTORY_ENABLED and not globals.history_override:
+            try:
+                _raw_links = []
+                for _rl in lines:
+                    _l = _rl.strip()
+                    if _l.startswith("//"):
+                        _l = "https:" + _l
+                    elif "://" not in _l and ": //" in _l:
+                        _l = _l.replace(": //", ": https://", 1)
+                    if "://" in _l:
+                        _raw_links.append("https://" + _l.split("://", 1)[1].strip())
+
+                if _raw_links:
+                    _fhash, _ridx, _ = await check_and_get_resume_info(
+                        file_path=x,
+                        file_name=file_name,
+                        user_id=user_id,
+                        links=_raw_links,
+                    )
+                    _summary = get_history().get_progress_summary(_fhash)
+                    _is_res = (
+                        _summary.get("can_resume") and
+                        _summary.get("completed", 0) > 0 and
+                        _summary.get("status") != "completed"
+                    )
+                    if _is_res:
+                        _saved_meta = (get_history().get_entry(_fhash) or {}).get("metadata", {})
+                        globals.history_override = {
+                            "file_hash":    _fhash,
+                            "is_resumable": True,
+                            "resume_index": _ridx,
+                            "b_name":       _saved_meta.get("batch_name", ""),
+                            "channel_id":   _saved_meta.get("channel_id"),
+                            "topic_map":    _saved_meta.get("topic_map", {}),
+                        }
+                        _prog = _summary.get("progress_percent", 0)
+                        _done = _summary.get("completed", 0)
+                        _tot  = _summary.get("total_links", len(_raw_links))
+                        await bot.send_message(
+                            m.chat.id,
+                            f"<b>♻️ Resumable batch detected!</b>\n\n"
+                            f"📂 <b>File:</b> <code>{file_name}</code>\n"
+                            f"📊 <b>Progress:</b> {_prog}% ({_done}/{_tot} done)\n"
+                            f"⏩ <b>Resuming from link #{_ridx + 1}...</b>",
+                            parse_mode=enums.ParseMode.HTML,
+                        )
+                        logging.info(f"[TRACE][DRM][GLOBAL_HISTORY_RESUME] hash={_fhash} from={_ridx + 1}")
+                    else:
+                        # New file — register it so progress is tracked going forward
+                        globals.history_override = {
+                            "file_hash":    _fhash,
+                            "is_resumable": False,
+                            "resume_index": 0,
+                            "b_name":       "",
+                            "channel_id":   None,
+                            "topic_map":    {},
+                        }
+                        logging.info(f"[TRACE][DRM][GLOBAL_HISTORY_NEW] hash={_fhash} links={len(_raw_links)}")
+            except Exception as _he:
+                logging.warning(f"[DRM] Global history auto-scan failed: {_he}")
+        # ─────────────────────────────────────────────────────────────────────
+
         os.remove(x)
         logging.info(f"[TRACE][DRM][TXT_DOWNLOADED] file_name={file_name!r} ext={ext!r} line_count={len(lines)} path={path!r}")
     elif m.text and "://" in m.text:
