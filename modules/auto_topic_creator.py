@@ -1,5 +1,6 @@
 import re
 import asyncio
+from collections import OrderedDict
 from pyrogram import Client, filters
 from pyrogram.raw import functions
 from pyrogram.errors import FloodWait
@@ -49,7 +50,7 @@ def parse_topics_from_text(text: str) -> list:
         bracket = re.match(r'^\[([^\]]+)\]\s*(.*)', line)
         if bracket:
             inner = bracket.group(1).strip()
-            if not inner.lstrip('-').isdigit():   # skip numeric IDs like [12345]
+            if not inner.lstrip('-').isdigit():
                 _add(inner)
             continue
 
@@ -67,6 +68,44 @@ def parse_topics_from_text(text: str) -> list:
             _add(heading)
 
     return topics
+
+
+def build_parent_topic_tree(topics: list) -> OrderedDict:
+    """
+    Group topics by their parent (part before the first '/').
+
+    e.g. ["Arithmetic", "English/Grammar", "English/Vocab", "English"]
+    →  OrderedDict({
+         "Arithmetic": ["Arithmetic"],
+         "English":    ["English/Grammar", "English/Vocab", "English"],
+       })
+
+    Each entry creates EXACTLY ONE forum topic (the parent).
+    All children are mapped to that same forum topic ID so the DRM
+    handler routes their links into the correct thread.
+    """
+    tree: OrderedDict = OrderedDict()
+    for t in topics:
+        parent = t.split('/')[0].strip()
+        if parent not in tree:
+            tree[parent] = []
+        if t not in tree[parent]:
+            tree[parent].append(t)
+    return tree
+
+
+def format_topic_tree(tree: OrderedDict) -> str:
+    """Build a human-readable grouped topic list for Telegram messages."""
+    lines = []
+    for parent, children in tree.items():
+        sub = [c for c in children if c != parent and '/' in c]
+        if sub:
+            lines.append(f"📁 **{parent}**")
+            for s in sub:
+                lines.append(f"    └ {s.split('/', 1)[1]}")
+        else:
+            lines.append(f"📌 **{parent}**")
+    return "\n".join(lines)
 
 
 def _extract_topic_id(result) -> int | None:
@@ -102,28 +141,32 @@ def register_auto_topic_handlers(bot: Client):
         topics = parse_topics_from_text(text)
 
         if not topics:
-            # No topics found — let DRM handler process it normally
+            # No topics — let DRM handler process normally
             await status.delete()
             return
 
-        # Topics found — ask user whether to create them
+        tree = build_parent_topic_tree(topics)
+        parent_count = len(tree)
+        total_count  = len(topics)
+
         _user_state[m.from_user.id] = {
             "state":    "WAIT_YN",
             "topics":   topics,
             "orig_msg": m,
         }
 
-        topic_list = "\n".join(f"{i+1}. {t}" for i, t in enumerate(topics))
+        tree_text = format_topic_tree(tree)
         await status.edit_text(
-            f"✅ Found **{len(topics)} topics**:\n\n{topic_list}\n\n"
-            f"Do you want to create these topics in a Telegram group?\n"
+            f"✅ Found **{total_count} topic entries** → **{parent_count} forum topics** will be created:\n\n"
+            f"{tree_text}\n\n"
+            f"_(Sub-topics share their parent's forum thread)_\n\n"
+            f"Do you want to create these **{parent_count} topics** in a Telegram group?\n"
             f"Reply **y** to create them, or **n** to skip and start downloading."
         )
 
-        # Stop propagation — DRM handler must NOT also fire on this upload
         m.stop_propagation()
 
-    # ── Step 2: y / n reply ───────────────────────────────────────────────────
+    # ── Step 2 & 3: y/n → group ID ───────────────────────────────────────────
     @bot.on_message(
         filters.private & filters.text & ~filters.command([
             "start", "stop", "id", "info", "logs", "reset",
@@ -149,7 +192,7 @@ def register_auto_topic_handlers(bot: Client):
 
         state = state_data.get("state")
 
-        # ── y/n question ──────────────────────────────────────────────────────
+        # ── y/n ───────────────────────────────────────────────────────────────
         if state == "WAIT_YN":
             answer = m.text.strip().lower()
             if answer not in ("y", "n", "yes", "no"):
@@ -157,7 +200,6 @@ def register_auto_topic_handlers(bot: Client):
                 return
 
             if answer in ("n", "no"):
-                # Skip topic creation — pass file straight to DRM
                 orig = state_data["orig_msg"]
                 _user_state.pop(user_id, None)
                 await m.reply_text("⏩ Skipping topic creation. Starting download flow...")
@@ -165,7 +207,6 @@ def register_auto_topic_handlers(bot: Client):
                 await drm_handler(client, orig)
                 return
 
-            # y — ask for group chat ID
             state_data["state"] = "WAIT_GROUP_ID"
             await m.reply_text(
                 "Send me the **Group Chat ID** where I should create these topics.\n"
@@ -173,26 +214,28 @@ def register_auto_topic_handlers(bot: Client):
             )
             return
 
-        # ── group chat ID input ───────────────────────────────────────────────
+        # ── group chat ID ─────────────────────────────────────────────────────
         if state == "WAIT_GROUP_ID":
             raw_id = m.text.strip()
             try:
                 group_chat_id = int(raw_id)
             except ValueError:
-                await m.reply_text("❌ Invalid Chat ID. Please send a number like `-1001234567890`")
+                await m.reply_text("❌ Invalid Chat ID. Send a number like `-1001234567890`")
                 return
 
             topics   = state_data["topics"]
             orig_msg = state_data["orig_msg"]
-            total    = len(topics)
-            created  = 0
-            failed   = 0
-            mapping  = {}   # topic_name → topic_id
-
             _user_state.pop(user_id, None)
 
+            tree    = build_parent_topic_tree(topics)
+            parents = list(tree.keys())
+            total   = len(parents)
+            created = 0
+            failed  = 0
+            mapping = {}   # full_topic_name → forum_topic_id
+
             progress_msg = await m.reply_text(
-                f"⏳ Starting topic creation for **{total} topics**..."
+                f"⏳ Creating **{total} forum topics**..."
             )
 
             # Resolve peer once
@@ -205,53 +248,63 @@ def register_auto_topic_handlers(bot: Client):
                 )
                 return
 
-            for i, topic_name in enumerate(topics, start=1):
+            for i, parent_name in enumerate(parents, start=1):
+                children = tree[parent_name]   # all full names (parent + sub-topics)
+
                 try:
                     result = await client.invoke(
                         functions.messages.CreateForumTopic(
                             peer=peer,
-                            title=topic_name,
+                            title=parent_name,
                             random_id=client.rnd_id(),
                         )
                     )
                     topic_id = _extract_topic_id(result)
                     if topic_id:
-                        mapping[topic_name] = topic_id
+                        # Map the parent AND every child sub-topic to this same topic_id
+                        for child in children:
+                            mapping[child] = topic_id
+                        mapping[parent_name] = topic_id
                     created += 1
+
+                    sub_count = len([c for c in children if c != parent_name])
+                    sub_note  = f" (+{sub_count} sub-topics)" if sub_count else ""
                     await progress_msg.edit_text(
-                        f"⏳ ({i}/{total}) ✅ Created: **{topic_name}**"
-                        + (f" (id: `{topic_id}`)" if topic_id else "")
+                        f"⏳ ({i}/{total}) ✅ **{parent_name}**{sub_note}"
+                        + (f" — thread `{topic_id}`" if topic_id else "")
                     )
+
                 except FloodWait as fw:
                     await asyncio.sleep(fw.value + 1)
                     try:
                         result = await client.invoke(
                             functions.messages.CreateForumTopic(
                                 peer=peer,
-                                title=topic_name,
+                                title=parent_name,
                                 random_id=client.rnd_id(),
                             )
                         )
                         topic_id = _extract_topic_id(result)
                         if topic_id:
-                            mapping[topic_name] = topic_id
+                            for child in children:
+                                mapping[child] = topic_id
+                            mapping[parent_name] = topic_id
                         created += 1
                         await progress_msg.edit_text(
-                            f"⏳ ({i}/{total}) ✅ Created: **{topic_name}**"
-                            + (f" (id: `{topic_id}`)" if topic_id else "")
+                            f"⏳ ({i}/{total}) ✅ **{parent_name}** (after FloodWait)"
                         )
                     except Exception as retry_err:
                         failed += 1
-                        logging.warning(f"[AutoTopic] FloodWait retry failed '{topic_name}': {retry_err}")
+                        logging.warning(f"[AutoTopic] Retry failed '{parent_name}': {retry_err}")
+
                 except Exception as e:
                     err_str = str(e)
                     failed += 1
-                    logging.warning(f"[AutoTopic] Failed to create '{topic_name}': {err_str}")
+                    logging.warning(f"[AutoTopic] Failed '{parent_name}': {err_str}")
 
                     if "CHAT_ADMIN_REQUIRED" in err_str or "not enough rights" in err_str.lower():
                         await progress_msg.edit_text(
-                            "❌ Bot is not admin or doesn't have **Manage Topics** permission.\n"
-                            "Make it admin with that permission, then try again."
+                            "❌ Bot needs **Manage Topics** admin permission in the group."
                         )
                         return
 
@@ -262,25 +315,28 @@ def register_auto_topic_handlers(bot: Client):
                         return
 
                     await progress_msg.edit_text(
-                        f"⏳ ({i}/{total}) ❌ Failed: **{topic_name}**\n`{err_str[:100]}`"
+                        f"⏳ ({i}/{total}) ❌ **{parent_name}**\n`{err_str[:100]}`"
                     )
 
                 await asyncio.sleep(1.2)
 
-            # Save the topic mapping so the DRM handler can route links to the right topics
+            # Save mapping so DRM routes English/Grammar → English thread, etc.
             if mapping:
                 from topic_handler import save_txt_topic_mapping
                 save_txt_topic_mapping(group_chat_id, mapping)
-                logging.info(f"[AutoTopic] Saved topic mapping for {group_chat_id}: {len(mapping)} entries")
+                logging.info(
+                    f"[AutoTopic] Saved mapping for {group_chat_id}: "
+                    f"{len(mapping)} entries ({total} parent topics)"
+                )
 
             await progress_msg.edit_text(
                 f"🏁 **Topics created!**\n\n"
-                f"✅ {created} created   ❌ {failed} failed\n"
-                f"💾 Topic mapping saved for group `{group_chat_id}`\n\n"
-                f"▶️ Starting download flow now..."
+                f"✅ {created}/{total} forum topics created\n"
+                f"💾 {len(mapping)} topic name mappings saved\n"
+                f"   _(sub-topics routed to parent threads)_\n\n"
+                f"▶️ Starting download flow..."
             )
 
-            # Hand off to the DRM handler to ask download questions
             from drm_handler import drm_handler
             await drm_handler(client, orig_msg)
 
