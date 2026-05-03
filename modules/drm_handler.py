@@ -900,6 +900,22 @@ async def _drm_handler_impl(bot: Client, m: Message):
     else:
         thumb = thumb
 
+    # ── Start progress tracking ───────────────────────────────────────────────
+    try:
+        from progress_tracker import start_batch, get_public_url
+        _start_idx = int(raw_text) - 1 if raw_text.isdigit() else 0
+        start_batch(b_name, file_name if m.document else "direct input", len(links), channel_id, _start_idx)
+        _prog_url = get_public_url()
+        if _prog_url:
+            await bot.send_message(
+                m.chat.id,
+                f"📊 **Live progress:**\n{_prog_url}/progress",
+                disable_web_page_preview=True,
+            )
+    except Exception:
+        pass
+    # ─────────────────────────────────────────────────────────────────────────
+
     try:
         if m.document and raw_text == "1":
             batch_message = await bot.send_message(chat_id=channel_id, text=f"<blockquote><b>🎯Target Batch : {b_name}</b></blockquote>")
@@ -1123,6 +1139,15 @@ async def _drm_handler_impl(bot: Client, m: Message):
             link0 = "https://" + Vxy
 
             _raw_name = links[i][0]
+
+            # ── Update live progress ──────────────────────────────────────────
+            try:
+                from progress_tracker import update as _pt_update
+                _pt_update(i + 1, len(links), _raw_name[:80], count - 1, failed_count)
+            except Exception:
+                pass
+            # ─────────────────────────────────────────────────────────────────
+
             # Extract content date from {DATE-DD-Month-YYYY} before stripping
             try:
                 from calendar_data import extract_date_from_raw
@@ -1696,6 +1721,14 @@ async def _drm_handler_impl(bot: Client, m: Message):
             f"┃   ┃   ┠📄 Total PDF URLs: {pdf_count}\n"
             f"┃   ┃   ┠📸 Total IMAGE URLs: {img_count}</blockquote>\n"
         )
+        # ── Mark progress as done ─────────────────────────────────────────────
+        try:
+            from progress_tracker import finish as _pt_finish
+            _pt_finish(success_count, failed_count, b_name)
+        except Exception:
+            pass
+        # ─────────────────────────────────────────────────────────────────────
+
         try:
             await bot.send_message(channel_id, _completion_msg)
         except Exception as _ce:
