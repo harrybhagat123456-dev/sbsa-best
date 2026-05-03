@@ -22,8 +22,8 @@ try:
 except ImportError:
     TXT_PARSER_AVAILABLE = False
 
-TOPIC_CONFIG_FILE = "topic_config.json"
-TOPIC_MEMORY_FILE = "topic_memory.json"
+TOPIC_CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "topic_config.json")
+TOPIC_MEMORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "topic_memory.json")
 
 
 # ---------------------------------------------------------------------------
