@@ -69,6 +69,8 @@ Key fixed version: `charset-normalizer==3.4.1` — must stay at this version; ne
 - Downloads go to `modules/downloads/` directory
 - `vars.py` has hardcoded fallback credentials so the bot starts without env vars set
 - YouTube cookies can be updated with `/cookies` by file upload or `/ytcookies` by pasted Netscape cookie text / cookie key-value pairs. The bot must not ask for Google passwords.
+- `render_manager.py` reads `GITHUB_TOKEN` (falls back to `GH_PAT`) and `GITHUB_REPO` (defaults to `harrybhagat123456-dev/sbsa-best`) — do NOT revert to `GH_PAT`-only.
+- Auto-push to GitHub: `.git/hooks/post-commit` pushes to `origin` using `GITHUB_TOKEN` after every commit. To push manually run: `bash -c 'REPO=harrybhagat123456-dev/sbsa-best; for f in modules/render_manager.py modules/main.py start.sh requirements.txt; do sha=$(curl -s -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/repos/$REPO/contents/$f" | python3 -c "import sys,json;print(json.load(sys.stdin).get(\"sha\",\"\"))"); content=$(base64 -w0 $f); curl -s -o /dev/null -w "%{http_code} $f\n" -X PUT "https://api.github.com/repos/$REPO/contents/$f" -H "Authorization: token $GITHUB_TOKEN" -H "Content-Type: application/json" -d "{\"message\":\"Update $f\",\"content\":\"$content\",\"sha\":\"$sha\"}"; done'`
 
 ---
 
