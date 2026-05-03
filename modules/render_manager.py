@@ -125,6 +125,51 @@ def register_render_manager_handlers(bot: Client):
             except Exception:
                 pass
 
+    @bot.on_message(filters.command("switchslot") & filters.private, group=-1)
+    async def cmd_switchslot(client: Client, message: Message):
+        try:
+            logging.info(f"[RenderManager] /switchslot from {message.from_user.id}, OWNER={OWNER}")
+            if message.from_user.id != OWNER:
+                await message.reply("Owner only command.")
+                return
+            parts = message.text.split()
+            if len(parts) < 2 or not parts[1].isdigit():
+                await message.reply(
+                    "Usage: `/switchslot <slot_number>`\n"
+                    "Example: `/switchslot 2`\n\n"
+                    "Use /listaccounts to see available slots."
+                )
+                return
+            slot = int(parts[1])
+            data, sha = _fetch_file()
+            accounts = data.get("accounts", [])
+            if slot < 1 or slot > len(accounts):
+                await message.reply(
+                    f"❌ Invalid slot `{slot}`.\n"
+                    f"You have {len(accounts)} account(s). Use 1–{len(accounts)}."
+                )
+                return
+            old_slot = int(data.get("active_slot", 1))
+            data["active_slot"] = slot
+            if _push_file(data, sha):
+                acc = accounts[slot - 1]
+                await message.reply(
+                    f"✅ **Active slot switched to Slot {slot}**\n\n"
+                    f"📌 **Was:** Slot {old_slot}\n"
+                    f"🔄 **Now:** Slot {slot}\n"
+                    f"🌐 URL: `{acc.get('url', 'N/A')}`\n"
+                    f"🆔 Service ID: `{acc.get('service_id', 'N/A')}`\n\n"
+                    f"⚠️ Make sure Slot {slot} is **active** on Render and old slot is **suspended**."
+                )
+            else:
+                await message.reply("❌ Failed to update. Check GITHUB_TOKEN has Contents write access.")
+        except Exception as e:
+            logging.exception(f"[RenderManager] /switchslot error: {e}")
+            try:
+                await message.reply(f"❌ Error: `{e}`")
+            except Exception:
+                pass
+
     @bot.on_message(filters.command("removeaccount") & filters.private, group=-1)
     async def cmd_removeaccount(client: Client, message: Message):
         try:
@@ -234,4 +279,4 @@ def register_render_manager_handlers(bot: Client):
         except Exception as e:
             logging.exception(f"[RenderManager] step handler error: {e}")
 
-    print(f"[RenderManager] Handlers registered (group=-1): /addaccount /listaccounts /removeaccount | OWNER={OWNER}")
+    print(f"[RenderManager] Handlers registered (group=-1): /addaccount /listaccounts /removeaccount /switchslot | OWNER={OWNER}")
