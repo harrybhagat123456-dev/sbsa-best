@@ -19,6 +19,7 @@ from youtube_handler import register_youtube_handlers
 from authorisation import register_authorisation_handlers
 from topic_handler import register_topic_handlers
 from mini_handler import register_mini_handlers
+from auto_topic_creator import register_auto_topic_handlers
 from vars import API_ID, API_HASH, BOT_TOKEN, OWNER, CREDIT, AUTH_USERS, TOTAL_USERS, cookies_file_path
 # .....,.....,.......,...,.......,....., .....,.....,.......,...,.......,.....,
 
@@ -196,6 +197,7 @@ register_drm_handlers(bot)
 register_topic_handlers(bot)
 register_mini_handlers(bot)
 register_render_manager_handlers(bot)
+register_auto_topic_handlers(bot)
 #==================================================================
 
 def notify_owner():
