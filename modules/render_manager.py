@@ -1,15 +1,15 @@
 import os
 import json
+import base64
 import logging
 import requests
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from vars import OWNER
 
-GH_PAT    = os.environ.get("GITHUB_TOKEN", os.environ.get("GH_PAT", ""))
-GH_REPO   = os.environ.get("GITHUB_REPO", "harrybhagat123456-dev/sbsa-best")
-VAR_NAME  = "RENDER_ACCOUNTS"
-ACTIVE_VAR = "ACTIVE_SLOT"
+GH_PAT   = os.environ.get("GITHUB_TOKEN", os.environ.get("GH_PAT", ""))
+GH_REPO  = os.environ.get("GITHUB_REPO", "harrybhagat123456-dev/sbsa-best")
+GH_FILE  = "render_accounts.json"   # stored as a plain file in the repo
 
 _pending = {}
 
@@ -22,43 +22,59 @@ def _gh_headers():
     }
 
 
-def _get_accounts() -> list:
-    url = f"https://api.github.com/repos/{GH_REPO}/actions/variables/{VAR_NAME}"
+def _fetch_file() -> tuple:
+    """
+    Returns (data_dict, sha_or_None).
+    data_dict has keys: "accounts" (list) and "active_slot" (int, 1-based).
+    """
+    url = f"https://api.github.com/repos/{GH_REPO}/contents/{GH_FILE}"
     r = requests.get(url, headers=_gh_headers(), timeout=10)
     if r.status_code == 404:
-        return []
+        return {"accounts": [], "active_slot": 1}, None
     r.raise_for_status()
-    return json.loads(r.json()["value"])
+    payload = r.json()
+    content = base64.b64decode(payload["content"]).decode("utf-8")
+    return json.loads(content), payload["sha"]
+
+
+def _push_file(data: dict, sha) -> bool:
+    """Push updated data dict back to GitHub."""
+    url = f"https://api.github.com/repos/{GH_REPO}/contents/{GH_FILE}"
+    encoded = base64.b64encode(json.dumps(data, indent=2).encode()).decode()
+    body = {
+        "message": "bot: update render accounts",
+        "content": encoded,
+    }
+    if sha:
+        body["sha"] = sha
+    r = requests.put(url, headers=_gh_headers(), json=body, timeout=10)
+    return r.status_code in (200, 201)
+
+
+def _get_accounts() -> list:
+    data, _ = _fetch_file()
+    return data.get("accounts", [])
 
 
 def _save_accounts(accounts: list) -> bool:
-    value = json.dumps(accounts)
-    url = f"https://api.github.com/repos/{GH_REPO}/actions/variables/{VAR_NAME}"
-    r = requests.patch(url, headers=_gh_headers(),
-                       json={"name": VAR_NAME, "value": value}, timeout=10)
-    if r.status_code == 404:
-        r = requests.post(
-            f"https://api.github.com/repos/{GH_REPO}/actions/variables",
-            headers=_gh_headers(),
-            json={"name": VAR_NAME, "value": value}, timeout=10)
-    return r.status_code in (200, 201, 204)
+    data, sha = _fetch_file()
+    data["accounts"] = accounts
+    return _push_file(data, sha)
+
+
+def _get_active_slot() -> int:
+    data, _ = _fetch_file()
+    return int(data.get("active_slot", 1))
 
 
 def _update_active_slot(slot: int) -> bool:
-    url = f"https://api.github.com/repos/{GH_REPO}/actions/variables/{ACTIVE_VAR}"
-    r = requests.patch(url, headers=_gh_headers(),
-                       json={"name": ACTIVE_VAR, "value": str(slot)}, timeout=10)
-    if r.status_code == 404:
-        r = requests.post(
-            f"https://api.github.com/repos/{GH_REPO}/actions/variables",
-            headers=_gh_headers(),
-            json={"name": ACTIVE_VAR, "value": str(slot)}, timeout=10)
-    return r.status_code in (200, 201, 204)
+    data, sha = _fetch_file()
+    data["active_slot"] = slot
+    return _push_file(data, sha)
 
 
 def register_render_manager_handlers(bot: Client):
 
-    # group=-1 so these run before all group-0 handlers
     @bot.on_message(filters.command("addaccount") & filters.private, group=-1)
     async def cmd_addaccount(client: Client, message: Message):
         try:
@@ -86,11 +102,12 @@ def register_render_manager_handlers(bot: Client):
             if message.from_user.id != OWNER:
                 await message.reply("Owner only command.")
                 return
-            accounts = _get_accounts()
+            data, _ = _fetch_file()
+            accounts = data.get("accounts", [])
             if not accounts:
                 await message.reply("No accounts registered yet.\nUse /addaccount to add one.")
                 return
-            active_slot = int(os.environ.get("ACTIVE_SLOT", 1))
+            active_slot = int(data.get("active_slot", 1))
             lines = ["**📋 Registered Render Accounts:**\n"]
             for i, acc in enumerate(accounts, 1):
                 status = "✅ ACTIVE" if i == active_slot else "⏸ Suspended"
@@ -120,22 +137,24 @@ def register_render_manager_handlers(bot: Client):
                 await message.reply("Usage: `/removeaccount <slot_number>`\nExample: `/removeaccount 2`")
                 return
             slot = int(parts[1])
-            accounts = _get_accounts()
+            data, sha = _fetch_file()
+            accounts = data.get("accounts", [])
             if slot < 1 or slot > len(accounts):
                 await message.reply(f"Invalid slot. You have {len(accounts)} account(s).")
                 return
             removed = accounts.pop(slot - 1)
-            if _save_accounts(accounts):
-                active = int(os.environ.get("ACTIVE_SLOT", 1))
-                if active == slot or active > len(accounts):
-                    _update_active_slot(1)
+            data["accounts"] = accounts
+            active = int(data.get("active_slot", 1))
+            if active == slot or active > len(accounts):
+                data["active_slot"] = 1
+            if _push_file(data, sha):
                 await message.reply(
                     f"✅ Slot {slot} removed!\n"
                     f"URL was: `{removed.get('url')}`\n"
                     f"Remaining: {len(accounts)} account(s)"
                 )
             else:
-                await message.reply("❌ Failed to save to GitHub. Check GITHUB_TOKEN permissions.")
+                await message.reply("❌ Failed to save. Check GITHUB_TOKEN has repo write access.")
         except Exception as e:
             logging.exception(f"[RenderManager] /removeaccount error: {e}")
             try:
@@ -187,9 +206,11 @@ def register_render_manager_handlers(bot: Client):
                 new_account = state["data"]
                 wait_msg = await message.reply("💾 Saving to GitHub...")
                 try:
-                    accounts = _get_accounts()
+                    data, sha = _fetch_file()
+                    accounts = data.get("accounts", [])
                     accounts.append(new_account)
-                    success = _save_accounts(accounts)
+                    data["accounts"] = accounts
+                    success = _push_file(data, sha)
                 except Exception as e:
                     await wait_msg.edit_text(f"❌ Failed: `{e}`")
                     _pending.pop(uid, None)
@@ -206,7 +227,10 @@ def register_render_manager_handlers(bot: Client):
                         f"The watchdog will auto-activate it when needed!"
                     )
                 else:
-                    await wait_msg.edit_text("❌ Failed to save to GitHub. Check GITHUB_TOKEN permissions.")
+                    await wait_msg.edit_text(
+                        "❌ Failed to save to GitHub.\n"
+                        "Make sure GITHUB_TOKEN has **Contents: Read & Write** permission."
+                    )
         except Exception as e:
             logging.exception(f"[RenderManager] step handler error: {e}")
 
