@@ -5,7 +5,7 @@ from pyrogram.types.messages_and_media import message
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, InputMediaPhoto
 # .....,.....,.......,...,.......,....., .....,.....,.......,...,.......,.....,
 import globals
-from modules import render_manager  # noqa — registers handlers automatically
+import render_manager  # noqa — registers handlers automatically
 from logs import logging
 from html_handler import register_html_handlers
 from drm_handler import register_drm_handlers
@@ -277,6 +277,9 @@ def reset_and_set_commands():
         {"command": "reset",           "description": "✅ Reset the Bot"},
         {"command": "allhistory",      "description": "📜 View All Users History"},
         {"command": "resetallhistory", "description": "🗑️ Clear All History"},
+        {"command": "addaccount",      "description": "➕ Add a new Render account slot"},
+        {"command": "listaccounts",    "description": "📋 List all registered Render accounts"},
+        {"command": "removeaccount",   "description": "🗑️ Remove a Render account slot"},
     ]
 
     # Default menu: keep user commands visible from the Telegram menu button
