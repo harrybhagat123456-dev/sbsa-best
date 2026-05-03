@@ -1,11 +1,12 @@
 import re
 import asyncio
 from collections import OrderedDict
-from pyrogram import Client, filters
+from pyrogram import Client, filters, enums
 from pyrogram.raw import functions
 from pyrogram.errors import FloodWait
 from pyrogram.types import Message
 from logs import logging
+from vars import OWNER
 
 # In-memory state: {user_id: {"state": ..., "topics": [...], "orig_msg": Message}}
 _user_state = {}
@@ -176,7 +177,7 @@ def register_auto_topic_handlers(bot: Client):
             "createtopic", "topics", "settopic", "setuptopics",
             "parsetxt", "defaulttopic", "parsetopics", "topicid",
             "gettopicid", "linktopics", "showtopics", "showmapping",
-            "clearmemory", "maketopics",
+            "clearmemory", "maketopics", "cleartopicmap",
             "broadcast", "broadusers",
             "addauth", "rmauth", "users", "allhistory",
             "addaccount", "listaccounts", "removeaccount", "switchslot",
@@ -365,5 +366,51 @@ def register_auto_topic_handlers(bot: Client):
 
             from drm_handler import drm_handler
             await drm_handler(client, orig_msg)
+
+    # ── /cleartopicmap ────────────────────────────────────────────────────────
+    @bot.on_message(filters.private & filters.command("cleartopicmap"))
+    async def cleartopicmap_command(client: Client, m: Message):
+        if not m.from_user or m.from_user.id != OWNER:
+            return
+
+        from topic_handler import load_topic_config, save_topic_config
+        args = m.text.split(maxsplit=1)
+
+        # No argument — list all groups that have a saved mapping
+        if len(args) < 2:
+            config = load_topic_config()
+            groups = {k: v for k, v in config.items() if v.get("txt_topic_mapping")}
+            if not groups:
+                await m.reply_text("📭 No saved topic mappings found in any group.")
+                return
+            lines = ["<b>📋 Groups with saved topic mappings:</b>\n"]
+            for gid, data in groups.items():
+                count = len(data["txt_topic_mapping"])
+                lines.append(f"• <code>{gid}</code> — {count} topic(s)")
+            lines.append(f"\n<b>To clear one:</b> <code>/cleartopicmap -1001234567890</code>")
+            await m.reply_text("\n".join(lines), parse_mode=enums.ParseMode.HTML)
+            return
+
+        # Group ID provided — clear that group's mapping
+        group_id = args[1].strip()
+        config   = load_topic_config()
+        key      = str(group_id)
+
+        if key not in config or not config[key].get("txt_topic_mapping"):
+            await m.reply_text(
+                f"📭 No saved mapping found for <code>{group_id}</code>.",
+                parse_mode=enums.ParseMode.HTML,
+            )
+            return
+
+        count = len(config[key]["txt_topic_mapping"])
+        config[key]["txt_topic_mapping"] = {}
+        save_topic_config(config)
+
+        await m.reply_text(
+            f"🗑️ Cleared <b>{count} topic entries</b> for <code>{group_id}</code>.\n"
+            f"Next .txt upload will create fresh topics.",
+            parse_mode=enums.ParseMode.HTML,
+        )
 
     print("[AutoTopicCreator] Handlers registered: auto .txt → forum topic creator")
