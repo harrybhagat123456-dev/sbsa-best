@@ -9,3 +9,4 @@ modules/001)[[:space:]]percentage[[:space:]]part[[:space:]][[:space:]]7.mp4 filt
 modules/test2.mp4 filter=lfs diff=lfs merge=lfs -text
 001)[[:space:]]Class-01[[:space:]][[:space:]]Ratio[[:space:]]&[[:space:]]Proportion[[:space:]]Part-1.mp4 filter=lfs diff=lfs merge=lfs -text
 002)[[:space:]]Class-02[[:space:]][[:space:]]Ratio[[:space:]]&[[:space:]]Proportion[[:space:]]Part-2.mp4 filter=lfs diff=lfs merge=lfs -text
+modules/003)[[:space:]]Class-03[[:space:]][[:space:]]Ratio[[:space:]]&[[:space:]]Proportion[[:space:]]Part-3.mp4 filter=lfs diff=lfs merge=lfs -text
