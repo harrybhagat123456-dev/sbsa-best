@@ -1,8 +1,9 @@
 import os
+import json
 import threading
 import time
 import requests
-from flask import Flask, jsonify
+from flask import Flask, jsonify, Response
 
 DOWNLOAD_FOLDERS = [
     os.path.join(os.path.dirname(__file__), "downloads"),
@@ -63,6 +64,109 @@ def home():
 </body>
 </html>
 """
+
+
+PROGRESS_FILE = "/tmp/bot_progress.json"
+
+
+@app.route("/progress_data")
+def progress_data():
+    try:
+        with open(PROGRESS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        data = {"active": False, "status": "idle", "percent": 0, "batch_name": "", "current": 0, "total": 0, "current_file": "No active download", "success": 0, "failed": 0}
+    return jsonify(data)
+
+
+@app.route("/progress")
+def progress_page():
+    html = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HARRY Bot — Download Progress</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0f0f0f; color: #e0e0e0; font-family: 'Segoe UI', monospace; padding: 20px; min-height: 100vh; }
+    .card { background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 14px; padding: 24px; max-width: 700px; margin: 0 auto; }
+    h1 { color: #4fc3f7; font-size: 22px; margin-bottom: 6px; }
+    .subtitle { color: #888; font-size: 13px; margin-bottom: 24px; }
+    .status-badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: bold; margin-bottom: 18px; }
+    .status-active { background: #1b5e20; color: #69f0ae; }
+    .status-done   { background: #0d47a1; color: #82b1ff; }
+    .status-idle   { background: #333; color: #aaa; }
+    .batch { font-size: 19px; font-weight: bold; color: #fff; margin-bottom: 4px; }
+    .file  { font-size: 13px; color: #b0bec5; margin-bottom: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .progress-wrap { background: #111; border-radius: 10px; height: 22px; overflow: hidden; margin-bottom: 10px; }
+    .progress-bar  { height: 100%; border-radius: 10px; background: linear-gradient(90deg, #1565c0, #42a5f5); transition: width 1s ease; display: flex; align-items: center; justify-content: flex-end; padding-right: 8px; }
+    .progress-bar span { font-size: 12px; font-weight: bold; color: #fff; }
+    .stats { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px; }
+    .stat { background: #111; border-radius: 8px; padding: 10px 16px; flex: 1; min-width: 100px; text-align: center; }
+    .stat-val { font-size: 22px; font-weight: bold; color: #4fc3f7; }
+    .stat-lbl { font-size: 11px; color: #777; margin-top: 2px; }
+    .current-file { background: #111; border-radius: 8px; padding: 12px; margin-top: 16px; font-size: 13px; color: #cfd8dc; word-break: break-word; }
+    .current-file b { color: #90caf9; }
+    .updated { font-size: 11px; color: #555; margin-top: 14px; text-align: right; }
+    .refresh-note { font-size: 11px; color: #444; margin-top: 4px; text-align: right; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>📥 HARRY Bot — Download Progress</h1>
+    <div class="subtitle">Live view · auto-refreshes every 3 seconds</div>
+    <div id="badge" class="status-badge status-idle">⏸ Idle</div>
+    <div id="batch"  class="batch">No active batch</div>
+    <div id="file-name" class="file"></div>
+    <div class="progress-wrap">
+      <div class="progress-bar" id="bar" style="width:0%"><span id="pct">0%</span></div>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="stat-val" id="s-cur">0</div><div class="stat-lbl">Done</div></div>
+      <div class="stat"><div class="stat-val" id="s-tot">0</div><div class="stat-lbl">Total</div></div>
+      <div class="stat"><div class="stat-val" id="s-ok" style="color:#69f0ae">0</div><div class="stat-lbl">Success</div></div>
+      <div class="stat"><div class="stat-val" id="s-fail" style="color:#ef9a9a">0</div><div class="stat-lbl">Failed</div></div>
+    </div>
+    <div class="current-file"><b>Current:</b> <span id="cur-file">—</span></div>
+    <div class="updated" id="upd"></div>
+    <div class="refresh-note">Auto-refresh every 3s</div>
+  </div>
+  <script>
+    async function poll() {
+      try {
+        const r = await fetch('/progress_data');
+        const d = await r.json();
+        const pct = Math.min(100, d.percent || 0);
+        document.getElementById('bar').style.width = pct + '%';
+        document.getElementById('pct').textContent = pct.toFixed(1) + '%';
+        document.getElementById('batch').textContent = d.batch_name || 'No active batch';
+        document.getElementById('file-name').textContent = d.file_name || '';
+        document.getElementById('s-cur').textContent  = d.current  || 0;
+        document.getElementById('s-tot').textContent  = d.total    || 0;
+        document.getElementById('s-ok').textContent   = d.success  || 0;
+        document.getElementById('s-fail').textContent = d.failed   || 0;
+        document.getElementById('cur-file').textContent = d.current_file || '—';
+        document.getElementById('upd').textContent = 'Last updated: ' + (d.updated_at || '—');
+        const badge = document.getElementById('badge');
+        if (d.active) {
+          badge.className = 'status-badge status-active';
+          badge.textContent = '▶ Downloading';
+        } else if (d.status === 'done') {
+          badge.className = 'status-badge status-done';
+          badge.textContent = '✅ Complete';
+        } else {
+          badge.className = 'status-badge status-idle';
+          badge.textContent = '⏸ Idle';
+        }
+      } catch(e) {}
+    }
+    poll();
+    setInterval(poll, 3000);
+  </script>
+</body>
+</html>"""
+    return Response(html, mimetype="text/html")
 
 
 @app.route("/ping")
