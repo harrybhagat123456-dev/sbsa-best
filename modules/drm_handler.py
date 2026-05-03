@@ -372,25 +372,20 @@ async def _drm_handler_impl(bot: Client, m: Message):
                     )
                     if _is_res:
                         _saved_meta = (get_history().get_entry(_fhash) or {}).get("metadata", {})
-                        globals.history_override = {
-                            "file_hash":    _fhash,
-                            "is_resumable": True,
-                            "resume_index": _ridx,
-                            "b_name":       _saved_meta.get("batch_name", ""),
-                            "channel_id":   _saved_meta.get("channel_id"),
-                            "topic_map":    _saved_meta.get("topic_map", {}),
-                        }
                         _prog = _summary.get("progress_percent", 0)
                         _done = _summary.get("completed", 0)
                         _tot  = _summary.get("total_links", len(_raw_links))
-                        await bot.send_message(
-                            m.chat.id,
-                            f"<b>♻️ Resumable batch detected!</b>\n\n"
-                            f"📂 <b>File:</b> <code>{file_name}</code>\n"
-                            f"📊 <b>Progress:</b> {_prog}% ({_done}/{_tot} done)\n"
-                            f"⏩ <b>Resuming from link #{_ridx + 1}...</b>",
-                            parse_mode=enums.ParseMode.HTML,
-                        )
+                        globals.history_override = {
+                            "file_hash":        _fhash,
+                            "is_resumable":     True,
+                            "resume_index":     _ridx,
+                            "b_name":           _saved_meta.get("batch_name", ""),
+                            "channel_id":       _saved_meta.get("channel_id"),
+                            "topic_map":        _saved_meta.get("topic_map", {}),
+                            "progress_percent": _prog,
+                            "completed":        _done,
+                            "total_links":      _tot,
+                        }
                         logging.info(f"[TRACE][DRM][GLOBAL_HISTORY_RESUME] hash={_fhash} from={_ridx + 1}")
                     else:
                         # New file — register it so progress is tracked going forward
@@ -549,32 +544,81 @@ async def _drm_handler_impl(bot: Client, m: Message):
         _hist_channel_id = _h.get("channel_id")      # saved from previous run
         _hist_topic_map  = _h.get("topic_map", {})   # topic_name → topic_id
 
+        # ── UNIFIED ANALYSIS (always shown — with resume info if detected) ─
+        _ts_lines = []
+        for _idx2, (_ts_name, _ts_cnt) in enumerate(_topic_summary, 1):
+            _ts_lines.append(f"  {_idx2}. 📌 {_ts_name} — {_ts_cnt} link{'s' if _ts_cnt != 1 else ''}")
+        _ts_block = "\n".join(_ts_lines) if _ts_lines else "  (no topics detected)"
+
+        _link_counts = (
+            f"<blockquote>•PDF : {pdf_count}      •V2 : {v2_count}\n"
+            f"•Img : {img_count}      •YT : {yt_count}\n"
+            f"•zip : {zip_count}       •m3u8 : {m3u8_count}\n"
+            f"•drm : {drm_count}      •Other : {other_count}\n"
+            f"•mpd : {mpd_count}</blockquote>"
+        )
+
         if _is_hist_resume:
-            # ── RESUME FLOW: skip from-where + batch name ─────────────────
+            _r_prog  = _h.get("progress_percent", 0)
+            _r_done  = _h.get("completed", 0)
+            _r_tot   = _h.get("total_links", len(links))
+            _r_bname = _hist_b_name or file_name.replace('_', ' ')
+            _r_ch    = f"<code>{_hist_channel_id}</code> ✅ saved" if _hist_channel_id else "⚠️ not saved — will ask"
+            _r_topics = (
+                f"✅ {len(_hist_topic_map)} topic(s) — auto-routed to saved positions"
+                if _hist_topic_map else
+                "🔍 no saved map — will resolve now"
+            )
+            _analysis_text = (
+                f"<b>📋 File Analysis + ♻️ Resume Detected</b>\n\n"
+                f"<b>🗂 Topics in this file:</b>\n"
+                f"<blockquote>{_ts_block}</blockquote>\n\n"
+                f"<b>📊 Link Type Breakdown:</b>\n"
+                f"{_link_counts}\n"
+                f"<b>Total 🔗 Links : {len(links)}</b>\n\n"
+                f"<b>♻️ Previous run found:</b>\n"
+                f"<blockquote>"
+                f"📊 Progress : {_r_prog}% ({_r_done}/{_r_tot} done)\n"
+                f"⏩ Resume from : link #{_hist_resume_idx + 1}\n"
+                f"📚 Batch : <code>{_r_bname}</code>\n"
+                f"📢 Channel : {_r_ch}\n"
+                f"🗺️ Topics : {_r_topics}"
+                f"</blockquote>"
+            )
+        else:
+            _analysis_text = (
+                f"<b>📋 File Analysis Complete!</b>\n\n"
+                f"<b>🗂 Topics that will be Pinned:</b>\n"
+                f"<blockquote>{_ts_block}</blockquote>\n\n"
+                f"<b>📊 Link Type Breakdown:</b>\n"
+                f"{_link_counts}\n"
+                f"<b>Total 🔗 Links : {len(links)}</b>"
+            )
+
+        await m.reply_text(_analysis_text, parse_mode=enums.ParseMode.HTML)
+        logging.info(
+            f"[TRACE][DRM][ANALYSIS_SENT] msg_key={_download_message_key(m)} links={len(links)} "
+            f"topics={len(_topic_summary)} resume={_is_hist_resume} "
+            f"pdf={pdf_count} img={img_count} yt={yt_count} "
+            f"m3u8={m3u8_count} drm={drm_count} mpd={mpd_count} zip={zip_count} other={other_count}"
+        )
+        await asyncio.sleep(1)
+
+        if _is_hist_resume:
+            # ── RESUME: all params pre-filled from history ────────────
             raw_text = str(_hist_resume_idx + 1)
             b_name   = _hist_b_name or file_name.replace('_', ' ')
 
             if _hist_channel_id:
-                # Channel and topics saved — resume silently, no prompts
                 channel_id = _hist_channel_id
-                raw_text7  = str(_hist_channel_id)   # non-/d so channel is used
-                _topic_status = f"✅ {len(_hist_topic_map)} topic(s) saved" if _hist_topic_map else "🔍 will resolve from /linktopics"
-                await m.reply_text(
-                    f"<b>▶️ Resuming from link #{_hist_resume_idx + 1}</b>\n\n"
-                    f"📚 <b>Batch:</b> <code>{b_name}</code>\n"
-                    f"📢 <b>Channel:</b> <code>{_hist_channel_id}</code> ✅ saved\n"
-                    f"🗺️ <b>Topics:</b> {_topic_status}",
-                    parse_mode=enums.ParseMode.HTML,
-                )
+                raw_text7  = str(_hist_channel_id)
             else:
-                # No saved channel — ask once
                 editable = await m.reply_text(
-                    f"<b>▶️ Resuming from link #{_hist_resume_idx + 1}</b>\n\n"
-                    f"📚 <b>Batch:</b> <code>{b_name}</code>\n\n"
-                    f"__**⚠️Provide the Channel ID or send /d**__\n"
+                    f"<b>▶️ One last thing — Channel ID needed to resume</b>\n\n"
                     f"<blockquote><i>🔹 Make me an admin to upload.\n"
                     f"🔸 Send /id in your channel to get the Channel ID.\n"
-                    f"Example: Channel ID = -100XXXXXXXXXXX</i></blockquote>",
+                    f"Example: Channel ID = -100XXXXXXXXXXX\n\n"
+                    f"Send /d to upload to this chat instead.</i></blockquote>",
                     parse_mode=enums.ParseMode.HTML,
                 )
                 try:
@@ -593,34 +637,8 @@ async def _drm_handler_impl(bot: Client, m: Message):
                 await editable.delete()
 
         else:
-            # ── NORMAL FLOW: pre-analysis → from-where → batch name → channel ─
-            # Build topic breakdown lines
-            _ts_lines = []
-            for _idx, (_ts_name, _ts_cnt) in enumerate(_topic_summary, 1):
-                _ts_lines.append(f"  {_idx}. 📌 {_ts_name} — {_ts_cnt} link{'s' if _ts_cnt != 1 else ''}")
-            _ts_block = "\n".join(_ts_lines) if _ts_lines else "  (no topics detected)"
-
-            _analysis_text = (
-                f"<b>📋 File Analysis Complete!</b>\n\n"
-                f"<b>🗂 Topics that will be Pinned:</b>\n"
-                f"<blockquote>{_ts_block}</blockquote>\n\n"
-                f"<b>📊 Link Type Breakdown:</b>\n"
-                f"<blockquote>•PDF : {pdf_count}      •V2 : {v2_count}\n"
-                f"•Img : {img_count}      •YT : {yt_count}\n"
-                f"•zip : {zip_count}       •m3u8 : {m3u8_count}\n"
-                f"•drm : {drm_count}      •Other : {other_count}\n"
-                f"•mpd : {mpd_count}</blockquote>\n"
-                f"<b>Total 🔗 Links : {len(links)}</b>"
-            )
-            await m.reply_text(_analysis_text)
-            logging.info(
-                f"[TRACE][DRM][ANALYSIS_SENT] msg_key={_download_message_key(m)} links={len(links)} "
-                f"topics={len(_topic_summary)} pdf={pdf_count} img={img_count} yt={yt_count} "
-                f"m3u8={m3u8_count} drm={drm_count} mpd={mpd_count} zip={zip_count} other={other_count}"
-            )
-            await asyncio.sleep(1)
-
-            editable = await m.reply_text(f"<b>Send start number to download from that point to end\nOr send a range like <code>1-10</code> to limit\n(1 – {len(links)})</b>")
+            # ── NORMAL FLOW: ask start → batch name → channel ─────────
+            editable = await m.reply_text(f"<b>Send start number to download from that point to end\nOr send a range like <code>1-10</code> to limit\n(1 – {len(links)})</b>", parse_mode=enums.ParseMode.HTML)
             try:
                 input0: Message = await safe_listen(bot, editable.chat.id, user_id, timeout=20)
                 if input0 is None:
