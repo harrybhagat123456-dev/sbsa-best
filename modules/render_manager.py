@@ -14,16 +14,17 @@ from pyrogram import Client, filters
 from pyrogram.types import Message
 
 OWNER_ID   = int(os.environ.get("OWNER", 0))
-GH_PAT     = os.environ.get("GH_PAT", "")
-GH_REPO    = os.environ.get("GITHUB_REPO", "")   # e.g. "harrybhagat123456-dev/sbsa-best"
+GH_PAT     = os.environ.get("GITHUB_TOKEN", os.environ.get("GH_PAT", ""))
+GH_REPO    = os.environ.get("GITHUB_REPO", "harrybhagat123456-dev/sbsa-best")
 VAR_NAME   = "RENDER_ACCOUNTS"                   # GitHub Actions Variable name
 ACTIVE_VAR = "ACTIVE_SLOT"
 
-GH_HEADERS = {
-    "Authorization": f"Bearer {GH_PAT}",
-    "Accept": "application/vnd.github+json",
-    "X-GitHub-Api-Version": "2022-11-28",
-}
+def _gh_headers():
+    return {
+        "Authorization": f"Bearer {GH_PAT}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
 
 # -- Pending state machine (per user) ------------------------------------------
 # Tracks multi-step /addaccount conversation
@@ -34,7 +35,7 @@ _pending = {}   # { user_id: { "step": 1|2|3, "data": {...} } }
 def _get_accounts() -> list:
     """Read RENDER_ACCOUNTS variable from GitHub."""
     url = f"https://api.github.com/repos/{GH_REPO}/actions/variables/{VAR_NAME}"
-    r = requests.get(url, headers=GH_HEADERS, timeout=10)
+    r = requests.get(url, headers=_gh_headers(), timeout=10)
     if r.status_code == 404:
         return []
     r.raise_for_status()
@@ -47,24 +48,24 @@ def _save_accounts(accounts: list) -> bool:
     url   = f"https://api.github.com/repos/{GH_REPO}/actions/variables/{VAR_NAME}"
 
     # Try PATCH (update) first, fall back to POST (create)
-    r = requests.patch(url, headers=GH_HEADERS,
+    r = requests.patch(url, headers=_gh_headers(),
                        json={"name": VAR_NAME, "value": value}, timeout=10)
     if r.status_code == 404:
         r = requests.post(
             f"https://api.github.com/repos/{GH_REPO}/actions/variables",
-            headers=GH_HEADERS,
+            headers=_gh_headers(),
             json={"name": VAR_NAME, "value": value}, timeout=10)
     return r.status_code in (200, 201, 204)
 
 
 def _update_active_slot(slot: int) -> bool:
     url = f"https://api.github.com/repos/{GH_REPO}/actions/variables/{ACTIVE_VAR}"
-    r = requests.patch(url, headers=GH_HEADERS,
+    r = requests.patch(url, headers=_gh_headers(),
                        json={"name": ACTIVE_VAR, "value": str(slot)}, timeout=10)
     if r.status_code == 404:
         r = requests.post(
             f"https://api.github.com/repos/{GH_REPO}/actions/variables",
-            headers=GH_HEADERS,
+            headers=_gh_headers(),
             json={"name": ACTIVE_VAR, "value": str(slot)}, timeout=10)
     return r.status_code in (200, 201, 204)
 
@@ -229,4 +230,4 @@ async def handle_addaccount_steps(client: Client, message: Message):
                 f"The watchdog will auto-activate it when needed!"
             )
         else:
-            await wait_msg.edit("Failed to save to GitHub. Check GH_PAT token permissions.")
+            await wait_msg.edit("Failed to save to GitHub. Check GITHUB_TOKEN permissions.")
