@@ -189,6 +189,55 @@ def save_topic_config(config: dict):
         json.dump(config, f, indent=2)
 
 
+def migrate_subtopic_ids(channel_id=None) -> dict:
+    """One-time migration: for every subtopic key containing '/', if its parent
+    exists in the same group's txt_topic_mapping, replace the child's ID with
+    the parent's ID.
+
+    Args:
+        channel_id: if given (int or str), only migrate that group.
+                    If None, migrate every group in the config.
+
+    Returns:
+        dict  {group_id_str: [(child_key, old_id, new_id), ...]}  — changes made
+    """
+    config = load_topic_config()
+    report = {}
+
+    targets = [str(channel_id)] if channel_id else list(config.keys())
+
+    for gid in targets:
+        if gid not in config:
+            continue
+        mapping = config[gid].get("txt_topic_mapping", {})
+        if not mapping:
+            continue
+
+        changes = []
+        for key in list(mapping.keys()):
+            if "/" not in key:
+                continue
+            parent = key.split("/")[0].strip()
+            if parent in mapping and mapping[parent] != mapping[key]:
+                old_id = mapping[key]
+                new_id = mapping[parent]
+                mapping[key] = new_id
+                changes.append((key, old_id, new_id))
+
+        if changes:
+            config[gid]["txt_topic_mapping"] = mapping
+            report[gid] = changes
+
+    if report:
+        save_topic_config(config)
+        total = sum(len(v) for v in report.values())
+        print(f"[TopicMigration] Fixed {total} subtopic ID(s) across {len(report)} group(s).")
+    else:
+        print("[TopicMigration] Nothing to fix — all subtopic IDs already correct.")
+
+    return report
+
+
 def get_chat_config(chat_id: int) -> dict:
     config = load_topic_config()
     key = str(chat_id)
@@ -910,6 +959,59 @@ async def showmapping_command(client: Client, message: Message):
         await message.reply_text(chunk, parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True)
 
 
+async def fixmapping_command(client: Client, message: Message):
+    """Command: /fixmapping [group_id]
+    Re-runs the subtopic-ID migration.
+    • /fixmapping              — fix every group in topic_config.json
+    • /fixmapping -1001234567890 — fix only that group
+    """
+    if message.from_user and message.from_user.id != OWNER:
+        return
+
+    args = message.command[1:] if message.command else []
+    target_id = None
+    if args and args[0].lstrip("-").isdigit():
+        target_id = int(args[0])
+
+    status = await message.reply_text(
+        "🔧 Running subtopic-ID migration...", parse_mode=enums.ParseMode.HTML
+    )
+
+    try:
+        report = migrate_subtopic_ids(target_id)
+    except Exception as e:
+        await status.edit(
+            f"❌ Migration error: <code>{e}</code>", parse_mode=enums.ParseMode.HTML
+        )
+        return
+
+    if not report:
+        await status.edit(
+            "✅ <b>Nothing to fix</b> — all subtopic IDs already point to their parent.",
+            parse_mode=enums.ParseMode.HTML,
+        )
+        return
+
+    lines = ["<b>✅ Subtopic ID Migration Complete</b>\n"]
+    total_fixed = 0
+    for gid, changes in report.items():
+        lines.append(f"<b>Group <code>{gid}</code> — {len(changes)} fix(es):</b>")
+        for key, old_id, new_id in changes:
+            lines.append(f"  • <code>{key}</code>\n    {old_id} → <code>{new_id}</code>")
+        total_fixed += len(changes)
+
+    lines.append(
+        f"\n💾 <b>{total_fixed} subtopic(s) corrected</b> and saved to topic_config.json."
+    )
+
+    result = "\n".join(lines)
+    MAX = 3800
+    chunks = [result[i:i+MAX] for i in range(0, len(result), MAX)]
+    await status.edit(chunks[0], parse_mode=enums.ParseMode.HTML)
+    for c in chunks[1:]:
+        await message.reply_text(c, parse_mode=enums.ParseMode.HTML)
+
+
 async def clearmemory_command(client: Client, message: Message):
     """Command: /clearmemory <channel_id|all> — clear saved topic memory."""
     if message.from_user and message.from_user.id != OWNER:
@@ -1540,6 +1642,7 @@ def register_topic_handlers(bot: Client):
     bot.on_message(filters.command("showmapping"))(showmapping_command)
     bot.on_message(filters.command("clearmemory"))(clearmemory_command)
     bot.on_message(filters.command("maketopics") & filters.private)(maketopics_command)
+    bot.on_message(filters.command("fixmapping"))(fixmapping_command)
 
     @bot.on_message(filters.group & filters.service)
     async def _on_group_join(client, message: Message):
@@ -1561,4 +1664,10 @@ def register_topic_handlers(bot: Client):
                     print(f"[TopicHandler] Auto-setup failed: {e}")
                 break
 
-    print("[TopicHandler] Handlers registered: /createtopic /topics /settopic /setuptopics /parsetxt /defaulttopic /topicid /gettopicid /parsetopics /linktopics /showtopics /showmapping /clearmemory /maketopics")
+    # Run subtopic-ID migration once at startup silently
+    try:
+        migrate_subtopic_ids()
+    except Exception as _me:
+        print(f"[TopicMigration] Startup migration error: {_me}")
+
+    print("[TopicHandler] Handlers registered: /createtopic /topics /settopic /setuptopics /parsetxt /defaulttopic /topicid /gettopicid /parsetopics /linktopics /showtopics /showmapping /clearmemory /maketopics /fixmapping")
