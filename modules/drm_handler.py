@@ -928,12 +928,15 @@ async def _drm_handler_impl(bot: Client, m: Message):
     _tg_prog_counter = 0
 
     def _build_prog_text(cur, tot, ok, fail, now_file, log_list, done=False, web_url=""):
+        import html as _html
         pct    = round(cur / tot * 100, 1) if tot else 0
         filled = int(pct / 10)
         bar    = "█" * filled + "░" * (10 - filled)
-        status = "✅ Complete!" if done else f"▶ <i>{(now_file or 'Starting…')[:80]}</i>"
+        _safe_batch = _html.escape(str(b_name or ""))
+        _safe_file  = _html.escape(str(now_file or "Starting…")[:80])
+        status = "✅ Complete!" if done else f"▶ <i>{_safe_file}</i>"
         txt = (
-            f"<b>📥 {b_name}</b>\n"
+            f"<b>📥 {_safe_batch}</b>\n"
             f"<code>{bar}</code> <b>{pct}%</b>\n"
             f"🔗 <b>{cur}/{tot}</b>  •  ✅ <b>{ok}</b>  •  ❌ <b>{fail}</b>\n\n"
             f"{status}"
@@ -943,7 +946,7 @@ async def _drm_handler_impl(bot: Client, m: Message):
             txt += "\n\n<b>Recent:</b>"
             for _le in reversed(recent):
                 _icon  = "✅" if _le.get("ok") else "❌"
-                _lname = (_le.get("name") or "").split("http")[0].strip()[:60]
+                _lname = _html.escape((_le.get("name") or "").split("http")[0].strip()[:60])
                 txt += f"\n{_icon} <code>#{_le.get('i',0)}</code> {_lname}"
         if web_url:
             txt += f"\n\n🌐 <a href='{web_url}/progress'>Live web view</a>"
@@ -961,9 +964,12 @@ async def _drm_handler_impl(bot: Client, m: Message):
                 parse_mode=enums.ParseMode.HTML,
                 disable_web_page_preview=True,
             )
-        except Exception:
+            print(f"[TG_PROG] Live progress message sent: {_tg_prog_msg.id}")
+        except Exception as _ep:
+            print(f"[TG_PROG] Failed to send initial progress message: {_ep}")
             _tg_prog_msg = None
-    except Exception:
+    except Exception as _ep2:
+        print(f"[TG_PROG] Outer init error: {_ep2}")
         _tg_prog_msg  = None
         _prog_url     = ""
     # ─────────────────────────────────────────────────────────────────────────
@@ -1229,8 +1235,9 @@ async def _drm_handler_impl(bot: Client, m: Message):
                         parse_mode=enums.ParseMode.HTML,
                         disable_web_page_preview=True,
                     )
-                except Exception:
-                    pass
+                    print(f"[TG_PROG] Edited at file {i+1}/{len(links)}")
+                except Exception as _ee:
+                    print(f"[TG_PROG] Edit failed at file {i+1}: {_ee}")
             # ─────────────────────────────────────────────────────────────────
 
             # Extract content date from {DATE-DD-Month-YYYY} before stripping
