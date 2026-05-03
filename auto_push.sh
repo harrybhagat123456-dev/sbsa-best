@@ -13,7 +13,11 @@ import urllib.error
 REPO  = "harrybhagat123456-dev/sbsa-best"
 BASE  = f"https://api.github.com/repos/{REPO}/contents"
 TOKEN = os.environ.get("GITHUB_TOKEN", "")
-SKIP  = {"modules/vars.py"}
+SKIP  = {
+    "modules/vars.py",       # credentials
+    "modules/bot.session",   # Telegram session (sensitive)
+    "modules/logs.txt",      # runtime logs
+}
 
 if not TOKEN:
     print("[AUTOPUSH] GITHUB_TOKEN not set — skipping.")
