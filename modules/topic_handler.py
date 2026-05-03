@@ -127,8 +127,8 @@ async def fetch_channel_topics(client: Client, chat_id) -> list:
     try:
         peer = await client.resolve_peer(chat_id)
         result = await client.invoke(
-            raw.functions.channels.GetForumTopics(
-                channel=peer,
+            raw.functions.messages.GetForumTopics(
+                peer=peer,
                 offset_date=0,
                 offset_id=0,
                 offset_topic=0,
