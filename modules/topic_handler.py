@@ -660,15 +660,90 @@ async def get_topic_id_command(client: Client, message: Message):
         )
 
 
+async def _gettopicid_broadcast(client: Client, message: Message, group_id: int):
+    """Broadcast /gettopicid to every topic in a group using the saved txt_topic_mapping."""
+    config = load_topic_config()
+    txt_map = config.get(str(group_id), {}).get("txt_topic_mapping", {})
+
+    if not txt_map:
+        await message.reply_text(
+            f"❌ No saved topics found for <code>{group_id}</code>.\n\n"
+            "Topics are saved automatically when you send a .txt file to the group.\n"
+            "Do that first, then run <code>/gettopicid {group_id}</code> again.",
+            parse_mode=enums.ParseMode.HTML,
+        )
+        return
+
+    # Invert map: topic_id → first name that maps to it
+    id_to_name: dict = {}
+    for name, tid in txt_map.items():
+        if tid not in id_to_name:
+            id_to_name[tid] = name
+
+    status = await message.reply_text(
+        f"📡 Broadcasting to <b>{len(id_to_name)}</b> topic(s) in <code>{group_id}</code>...",
+        parse_mode=enums.ParseMode.HTML,
+    )
+
+    ok, fail = [], []
+    for tid, primary_name in sorted(id_to_name.items()):
+        link = _make_topic_link(group_id, tid)
+        for attempt in range(2):
+            try:
+                await client.send_message(
+                    group_id,
+                    f"📌 <b>Topic ID:</b> <code>{tid}</code>\n"
+                    f"<b>Name:</b> {primary_name}\n"
+                    f"<b>Link:</b> <a href='{link}'>{link}</a>",
+                    message_thread_id=tid,
+                    parse_mode=enums.ParseMode.HTML,
+                    disable_web_page_preview=True,
+                )
+                _mem_save_topic(group_id, tid, primary_name, link)
+                ok.append((tid, primary_name))
+                break
+            except FloodWait as fw:
+                await asyncio.sleep(fw.value + 1)
+            except Exception as e:
+                if attempt == 1:
+                    fail.append((tid, primary_name, str(e)))
+                break
+        await asyncio.sleep(0.4)
+
+    lines = [f"<b>✅ Broadcast done for <code>{group_id}</code></b>"]
+    if ok:
+        lines.append(f"\n<b>🟢 Reached {len(ok)} topic(s):</b>")
+        for tid, name in ok:
+            lines.append(f"  • {name} — ID <code>{tid}</code>")
+    if fail:
+        lines.append(f"\n<b>🔴 Failed ({len(fail)}):</b>")
+        for tid, name, err in fail:
+            lines.append(f"  • {name}: <code>{err[:80]}</code>")
+    lines.append(
+        f"\n💾 All reachable topics saved to memory.\n"
+        f"▶️ Now run <code>/linktopics</code> to match with your txt file."
+    )
+    await status.edit(
+        "\n".join(lines),
+        parse_mode=enums.ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
+
+
 async def gettopicid_command(client: Client, message: Message):
-    """Command: /gettopicid — send inside a forum topic to auto-save its info to memory.
-    
-    Step 1 of the /linktopics workflow:
-      Open each forum topic in your channel → send /gettopicid → bot saves Name + ID + Link.
-      Once all topics are collected, run /linktopics to match them with your txt file.
+    """Command: /gettopicid [group_id]
+
+    • /gettopicid -1001234567890  → broadcast to every saved topic in that group
+    • /gettopicid  (inside a topic) → save this single topic to memory
     """
     cid = message.chat.id
     tid = message.message_thread_id
+
+    # ── Broadcast mode: /gettopicid <group_id> ──────────────────────────────
+    args = message.command[1:] if message.command else []
+    if args and args[0].lstrip("-").isdigit():
+        await _gettopicid_broadcast(client, message, int(args[0]))
+        return
 
     if not tid:
         await message.reply_text(
@@ -1067,14 +1142,26 @@ async def link_topics_command(client: Client, message: Message):
     saved_topics = _mem_get_channel_topics(channel_id)
 
     if not saved_topics:
+        # Auto-populate from topic_config.json before failing
+        _cfg = load_topic_config()
+        _txt_map = _cfg.get(str(channel_id), {}).get("txt_topic_mapping", {})
+        if _txt_map:
+            _id_to_name: dict = {}
+            for _n, _t in _txt_map.items():
+                if _t not in _id_to_name:
+                    _id_to_name[_t] = _n
+            for _t, _n in _id_to_name.items():
+                _lnk = _make_topic_link(channel_id, _t)
+                _mem_save_topic(channel_id, _t, _n, _lnk)
+            saved_topics = _mem_get_channel_topics(channel_id)
+
+    if not saved_topics:
         await prompt.edit(
             f"<b>❌ No topics found in memory for channel <code>{channel_id}</code>.</b>\n\n"
-            f"<b>Please do this first:</b>\n"
-            f"1. Open your channel in Telegram\n"
-            f"2. Go into <b>each forum topic</b> one by one\n"
-            f"3. Send <code>/gettopicid</code> in each topic\n"
-            f"4. Then run <code>/linktopics</code> again!\n\n"
-            f"<i>The bot cannot list topics via API — you must collect them manually with /gettopicid.</i>",
+            f"<b>Quick fix:</b>\n"
+            f"Run <code>/gettopicid {channel_id}</code> — the bot will broadcast to all topics "
+            f"automatically and populate memory for you.\n\n"
+            f"<i>Then run /linktopics again.</i>",
             parse_mode=enums.ParseMode.HTML,
         )
         return
@@ -1232,7 +1319,7 @@ async def link_topics_command(client: Client, message: Message):
         for n in unmatched:
             result_lines.append(
                 f"• <code>{esc(n)}</code>\n"
-                f"  <i>Go into its topic → send /gettopicid → run /linktopics again</i>"
+                f"  <i>No matching topic found — check the topic name in your group.</i>"
             )
 
     result_lines.append(
