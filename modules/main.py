@@ -116,16 +116,33 @@ async def back_to_main_menu(client, callback_query):
 # .....,.....,.......,...,.......,....., .....,.....,.......,...,.......,.....,
 # .....,.....,.......,...,.......,....., .....,.....,.......,...,.......,.....,
 
-@bot.on_message(filters.command(["id"]) & filters.private)
+@bot.on_message(filters.command(["id"]))
 async def id_command(client, message: Message):
+    user = message.from_user
+    chat = message.chat
+    user_id = user.id if user else "N/A"
+    chat_id = chat.id
+
+    is_group = chat.type in (enums.ChatType.GROUP, enums.ChatType.SUPERGROUP, enums.ChatType.FORUM)
+    is_channel = chat.type == enums.ChatType.CHANNEL
+
+    lines = ["<b>🆔 ID Information</b>", "▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰"]
+    if user:
+        lines.append(f"👤 <b>Your User ID:</b> <code>{user_id}</code>")
+    lines.append(f"💬 <b>Chat ID:</b> <code>{chat_id}</code>")
+    if is_group:
+        lines.append(f"👥 <b>Group ID:</b> <code>{chat_id}</code>")
+        if chat.title:
+            lines.append(f"📛 <b>Group Name:</b> {chat.title}")
+    elif is_channel:
+        lines.append(f"📢 <b>Channel ID:</b> <code>{chat_id}</code>")
+        if chat.title:
+            lines.append(f"📛 <b>Channel Name:</b> {chat.title}")
+    lines.append("▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰")
+
+    text = "\n".join(lines)
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(text="Send to Owner", url=f"tg://openmessage?user_id={OWNER}")]])
-    chat_id = message.chat.id
-    text = f"<blockquote expandable><b>The ID of this chat id is:</b></blockquote>\n`{chat_id}`"
-    
-    if str(chat_id).startswith("-100"):
-        await message.reply_text(text)
-    else:
-        await message.reply_text(text, reply_markup=keyboard)
+    await message.reply_text(text, parse_mode=enums.ParseMode.HTML, reply_markup=keyboard)
 
 # .....,.....,.......,...,.......,....., .....,.....,.......,...,.......,.....,
 
@@ -222,24 +239,19 @@ def reset_and_set_commands():
 
     # In groups: commands that make sense outside private chat
     group_commands = [
-        {"command": "mini",       "description": "📅 Browse uploaded content by date"},
-        {"command": "topicnav",   "description": "📚 Repost uploaded topic navigation"},
-        {"command": "ytm",        "description": "🎶 YouTube to MP3 downloader"},
-        {"command": "y2t",        "description": "🔪 YouTube to TXT converter"},
-        {"command": "yth",        "description": "📥 YouTube MP3 with resume"},
-        {"command": "history",    "description": "📥 TXT batch downloader with resume"},
-        {"command": "viewhistory","description": "📜 View download history"},
+        {"command": "mini",        "description": "📅 Browse uploaded content by date"},
+        {"command": "topicnav",    "description": "📚 Repost uploaded topic navigation"},
+        {"command": "ytm",         "description": "🎶 YouTube to MP3 downloader"},
+        {"command": "y2t",         "description": "🔪 YouTube to TXT converter"},
+        {"command": "yth",         "description": "📥 YouTube MP3 with resume"},
+        {"command": "history",     "description": "📥 TXT batch downloader with resume"},
+        {"command": "viewhistory", "description": "📜 View download history"},
         {"command": "clearhistory","description": "🗑️ Clear download history"},
-        {"command": "t2t",        "description": "📟 Text to TXT generator"},
-        {"command": "t2h",        "description": "🌐 TXT to HTML converter"},
-        {"command": "json",       "description": "🔄 JSON to TXT link converter"},
-        {"command": "parsetopics","description": "🔍 Preview topics in TXT file"},
-        {"command": "topicid",    "description": "📌 Get this topic's ID and link"},
-        {"command": "gettopicid", "description": "💾 Save this topic to memory"},
-        {"command": "linktopics", "description": "🔗 Match saved topics with TXT file"},
-        {"command": "showtopics", "description": "📊 Show saved topics"},
-        {"command": "showmapping","description": "🗺️ Show topic mapping"},
-        {"command": "clearmemory","description": "🗑️ Clear saved topic memory"},
+        {"command": "t2t",         "description": "📟 Text to TXT generator"},
+        {"command": "t2h",         "description": "🌐 TXT to HTML converter"},
+        {"command": "json",        "description": "🔄 JSON to TXT link converter"},
+        {"command": "id",          "description": "🆔 Get User/Chat/Group ID"},
+        {"command": "maketopics",  "description": "🧵 Bulk-create forum topics from TXT file"},
     ]
 
     # In private chats: full user command list
@@ -267,22 +279,7 @@ def reset_and_set_commands():
         {"command": "clearhistory",   "description": "🗑️ Clear Download History"},
         {"command": "mini",           "description": "📅 Browse uploaded content by date"},
         {"command": "topicnav",       "description": "📚 Repost uploaded topic navigation"},
-        {"command": "createtopic",    "description": "🧵 Create a forum topic"},
         {"command": "maketopics",     "description": "🧵 Bulk-create forum topics from TXT file"},
-        {"command": "topics",         "description": "📚 List forum topics"},
-        {"command": "settopic",       "description": "📌 Set active topic"},
-        {"command": "setuptopics",    "description": "⚙️ Setup topic routing"},
-        {"command": "parsetxt",       "description": "🔍 Parse TXT topics"},
-        {"command": "defaulttopic",   "description": "📍 Set default topic"},
-        {"command": "parsetopics",    "description": "🔍 Preview Topics in TXT File"},
-        {"command": "topicid",        "description": "📌 Get Topic ID (any group)"},
-        {"command": "gettopicid",     "description": "💾 Save topic(s) to memory"},
-        {"command": "linktopics",     "description": "🔗 Match saved topics with txt file"},
-        {"command": "showtopics",     "description": "📊 Show all saved topics"},
-        {"command": "showmapping",    "description": "🗺️ Show topic mapping for a channel"},
-        {"command": "clearmemory",    "description": "🗑️ Clear saved topic memory"},
-        {"command": "cleartopicmap",  "description": "🗑️ Wipe txt→topic mapping for a group"},
-        {"command": "fixmapping",     "description": "🔧 Fix subtopic IDs to parent"},
         {"command": "addaccount",     "description": "➕ Add a new Render account slot"},
         {"command": "listaccounts",   "description": "📋 List all registered Render accounts"},
         {"command": "removeaccount",  "description": "🗑️ Remove a Render account slot"},
