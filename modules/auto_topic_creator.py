@@ -249,14 +249,14 @@ def register_auto_topic_handlers(bot: Client):
                 )
                 return
 
-            # Fetch existing topics once — avoids creating duplicates
-            from topic_handler import fetch_channel_topics
-            existing_raw = await fetch_channel_topics(client, group_chat_id)
-            # {lowercase_title: topic_id}
-            existing = {title.strip().lower(): tid for tid, title in existing_raw}
+            # Load previously saved mapping for this group (no Telegram API call needed)
+            from topic_handler import get_txt_topic_mapping
+            saved_map = get_txt_topic_mapping(group_chat_id)
+            # {lowercase_topic_name: topic_id}
+            existing = {k.strip().lower(): v for k, v in saved_map.items() if v}
             if existing:
                 await progress_msg.edit_text(
-                    f"🔍 Found **{len(existing)}** existing topics in the group.\n"
+                    f"🔍 Found **{len(existing)}** previously saved topic mappings for this group.\n"
                     f"⏳ Matching against **{total}** required topics..."
                 )
                 await asyncio.sleep(0.8)
