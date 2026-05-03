@@ -1,8 +1,7 @@
 import re
-import random
 import asyncio
 from pyrogram import Client, filters
-from pyrogram.raw import functions, types
+from pyrogram.raw import functions
 from pyrogram.types import Message
 from logs import logging
 
@@ -150,13 +149,9 @@ def register_auto_topic_handlers(bot: Client):
             f"⏳ Starting topic creation for **{total} topics**..."
         )
 
-        # resolve_peer → InputPeerChannel, then convert to InputChannel
+        # Resolve peer once before the loop
         try:
-            peer    = await client.resolve_peer(group_chat_id)
-            channel = types.InputChannel(
-                channel_id=peer.channel_id,
-                access_hash=peer.access_hash,
-            )
+            peer = await client.resolve_peer(group_chat_id)
         except Exception as e:
             await progress_msg.edit_text(
                 f"❌ Could not find the group.\n"
@@ -167,10 +162,10 @@ def register_auto_topic_handlers(bot: Client):
         for i, topic_name in enumerate(topics, start=1):
             try:
                 await client.invoke(
-                    functions.channels.CreateForumTopic(
-                        channel=channel,
+                    functions.messages.CreateForumTopic(
+                        peer=peer,
                         title=topic_name,
-                        random_id=random.randint(1, 2**31),
+                        random_id=client.rnd_id(),
                     )
                 )
                 created += 1
