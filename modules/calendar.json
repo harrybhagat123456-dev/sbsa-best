@@ -1319,6 +1319,39 @@
       "thread_id": 5,
       "type": "video",
       "batch": "SSC Sankalp Batch-03"
+    },
+    {
+      "date": "2026-05-03",
+      "date_display": "3 May 2026",
+      "title": "Class-01  Ratio & Proportion Part-1",
+      "topic": "Arithmetic",
+      "message_id": 511,
+      "channel_id": -1003771469649,
+      "thread_id": 476,
+      "type": "video",
+      "batch": "SSC Sankalp Batch-03 (9)"
+    },
+    {
+      "date": "2026-05-03",
+      "date_display": "3 May 2026",
+      "title": "Class-02  Ratio & Proportion Part-2",
+      "topic": "Arithmetic",
+      "message_id": 514,
+      "channel_id": -1003771469649,
+      "thread_id": 476,
+      "type": "video",
+      "batch": "SSC Sankalp Batch-03 (9)"
+    },
+    {
+      "date": "2026-05-03",
+      "date_display": "3 May 2026",
+      "title": "Class-03  Ratio & Proportion Part-3",
+      "topic": "Arithmetic",
+      "message_id": 517,
+      "channel_id": -1003771469649,
+      "thread_id": 476,
+      "type": "video",
+      "batch": "SSC Sankalp Batch-03 (9)"
     }
   ]
 }
