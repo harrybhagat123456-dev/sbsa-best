@@ -231,11 +231,12 @@ def register_auto_topic_handlers(bot: Client):
             parents = list(tree.keys())
             total   = len(parents)
             created = 0
+            reused  = 0
             failed  = 0
             mapping = {}   # full_topic_name → forum_topic_id
 
             progress_msg = await m.reply_text(
-                f"⏳ Creating **{total} forum topics**..."
+                f"⏳ Checking existing topics in group..."
             )
 
             # Resolve peer once
@@ -248,8 +249,36 @@ def register_auto_topic_handlers(bot: Client):
                 )
                 return
 
+            # Fetch existing topics once — avoids creating duplicates
+            from topic_handler import fetch_channel_topics
+            existing_raw = await fetch_channel_topics(client, group_chat_id)
+            # {lowercase_title: topic_id}
+            existing = {title.strip().lower(): tid for tid, title in existing_raw}
+            if existing:
+                await progress_msg.edit_text(
+                    f"🔍 Found **{len(existing)}** existing topics in the group.\n"
+                    f"⏳ Matching against **{total}** required topics..."
+                )
+                await asyncio.sleep(0.8)
+
             for i, parent_name in enumerate(parents, start=1):
-                children = tree[parent_name]   # all full names (parent + sub-topics)
+                children  = tree[parent_name]   # all full names (parent + sub-topics)
+                sub_count = len([c for c in children if c != parent_name])
+                sub_note  = f" (+{sub_count} sub-topics)" if sub_count else ""
+
+                # ── Reuse if topic already exists ─────────────────────────────
+                existing_id = existing.get(parent_name.strip().lower())
+                if existing_id:
+                    for child in children:
+                        mapping[child] = existing_id
+                    mapping[parent_name] = existing_id
+                    reused += 1
+                    await progress_msg.edit_text(
+                        f"⏳ ({i}/{total}) ♻️ **{parent_name}**{sub_note} — already exists (id: `{existing_id}`)"
+                    )
+                    await asyncio.sleep(0.3)
+                    continue
+                # ─────────────────────────────────────────────────────────────
 
                 try:
                     result = await client.invoke(
@@ -261,14 +290,11 @@ def register_auto_topic_handlers(bot: Client):
                     )
                     topic_id = _extract_topic_id(result)
                     if topic_id:
-                        # Map the parent AND every child sub-topic to this same topic_id
                         for child in children:
                             mapping[child] = topic_id
                         mapping[parent_name] = topic_id
                     created += 1
 
-                    sub_count = len([c for c in children if c != parent_name])
-                    sub_note  = f" (+{sub_count} sub-topics)" if sub_count else ""
                     await progress_msg.edit_text(
                         f"⏳ ({i}/{total}) ✅ **{parent_name}**{sub_note}"
                         + (f" — thread `{topic_id}`" if topic_id else "")
@@ -330,8 +356,8 @@ def register_auto_topic_handlers(bot: Client):
                 )
 
             await progress_msg.edit_text(
-                f"🏁 **Topics created!**\n\n"
-                f"✅ {created}/{total} forum topics created\n"
+                f"🏁 **Done!**\n\n"
+                f"✅ {created} created   ♻️ {reused} reused   ❌ {failed} failed\n"
                 f"💾 {len(mapping)} topic name mappings saved\n"
                 f"   _(sub-topics routed to parent threads)_\n\n"
                 f"▶️ Starting download flow..."
