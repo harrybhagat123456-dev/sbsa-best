@@ -161,12 +161,16 @@ def get_txt_topic_mapping(channel_id) -> dict:
 
 
 def save_txt_topic_mapping(channel_id, mapping: dict):
-    """Persist txt→topic_id mapping for a channel."""
+    """Persist txt→topic_id mapping for a channel.
+    Merges into existing entries — never wipes other groups or previous topics.
+    """
     config = load_topic_config()
     key = str(channel_id)
     if key not in config:
         config[key] = {}
-    config[key]["txt_topic_mapping"] = mapping
+    existing = config[key].get("txt_topic_mapping", {})
+    existing.update(mapping)          # merge: add/update, never delete
+    config[key]["txt_topic_mapping"] = existing
     save_topic_config(config)
 
 
@@ -794,33 +798,41 @@ async def showmapping_command(client: Client, message: Message):
         return
 
     ch_id = args[1].strip()
+
+    # ── Primary: topic_memory.json (rich format with links) ──────────────────
     mapping = _mem_get_mapping(ch_id)
+    if mapping:
+        lines = [f"<b>🔗 Topic Mapping for</b> <code>{ch_id}</code> ({len(mapping)} topics)\n━━━━━━━━━━━━━━━━━━\n"]
+        for txt_name, info in mapping.items():
+            tid   = info.get("topic_id", "?")
+            tname = info.get("topic_name", txt_name)
+            tlink = info.get("topic_link", "")
+            lines.append(
+                f"<b>📄 {txt_name}</b>\n"
+                f"   → {tname} (ID: <code>{tid}</code>)\n"
+                + (f"   🔗 <a href=\"{tlink}\">{tlink}</a>" if tlink else "")
+            )
+        text = "\n\n".join(lines)
 
-    if not mapping:
-        await message.reply_text(
-            f"<b>📭 No mapping found for channel:</b> <code>{ch_id}</code>\n\n"
-            f"Run <code>/linktopics</code> to create one.",
-            parse_mode=enums.ParseMode.HTML,
-        )
-        return
+    else:
+        # ── Fallback: txt_topic_mapping in topic_config.json ─────────────────
+        txt_map = get_txt_topic_mapping(ch_id)
+        if not txt_map:
+            await message.reply_text(
+                f"<b>📭 No mapping found for:</b> <code>{ch_id}</code>\n\n"
+                f"Upload a .txt file or run <code>/linktopics</code> to create one.",
+                parse_mode=enums.ParseMode.HTML,
+            )
+            return
+        lines = [f"<b>📋 Saved Topics for</b> <code>{ch_id}</code> ({len(txt_map)} topics)\n━━━━━━━━━━━━━━━━━━\n"]
+        for i, (name, tid) in enumerate(txt_map.items(), start=1):
+            lines.append(f"{i}. {name} → ID: <code>{tid}</code>")
+        text = "\n".join(lines)
 
-    lines = [f"<b>🔗 Topic Mapping for</b> <code>{ch_id}</code> ({len(mapping)} topics)\n━━━━━━━━━━━━━━━━━━\n"]
-    for txt_name, info in mapping.items():
-        tid = info.get("topic_id", "?")
-        tname = info.get("topic_name", txt_name)
-        tlink = info.get("topic_link", "")
-        lines.append(
-            f"<b>📄 {txt_name}</b>\n"
-            f"   → {tname} (ID: <code>{tid}</code>)\n"
-            + (f"   🔗 <a href=\"{tlink}\">{tlink}</a>" if tlink else "")
-        )
-
-    text = "\n\n".join(lines)
     MAX = 3800
     chunks = [text[i:i+MAX] for i in range(0, len(text), MAX)] if len(text) > MAX else [text]
-    await message.reply_text(chunks[0], parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True)
-    for c in chunks[1:]:
-        await message.reply_text(c, parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True)
+    for chunk in chunks:
+        await message.reply_text(chunk, parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True)
 
 
 async def clearmemory_command(client: Client, message: Message):
