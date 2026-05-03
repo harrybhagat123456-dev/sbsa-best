@@ -1,9 +1,10 @@
 import re
+import random
 import asyncio
 from pyrogram import Client, filters
+from pyrogram.raw import functions, types
 from pyrogram.types import Message
 from logs import logging
-from topic_handler import create_forum_topic
 
 # In-memory state: {user_id: {"state": "WAIT_GROUP_ID", "topics": [...]}}
 _user_state = {}
@@ -34,7 +35,7 @@ def parse_topics_from_text(text: str) -> list:
         if not line or line.startswith('#'):
             continue
 
-        # ── Format 4: 📌 Topic Name — 123 links ──────────────────────────────
+        # Format 4: 📌 Topic Name — 123 links
         if '📌' in line and '—' in line:
             try:
                 name = line.split('📌')[1].split('—')[0].strip()
@@ -44,16 +45,15 @@ def parse_topics_from_text(text: str) -> list:
                 pass
             continue
 
-        # ── Format 2: [Topic Name] standalone or as inline prefix before URL ─
+        # Format 2: [Topic Name] standalone or as inline prefix before URL
         bracket = re.match(r'^\[([^\]]+)\]\s*(.*)', line)
         if bracket:
             inner = bracket.group(1).strip()
-            rest  = bracket.group(2).strip()
             if not inner.lstrip('-').isdigit():   # skip numeric IDs like [12345]
                 _add(inner)
             continue
 
-        # ── Format 3: (Topic Name) at start of a content line ────────────────
+        # Format 3: (Topic Name) at start of a content line
         if '://' in line or ': //' in line:
             name_part = re.split(r':\s*//', line, maxsplit=1)[0].strip()
             cat = re.match(r'^\(([^)]+)\)', name_part)
@@ -61,8 +61,8 @@ def parse_topics_from_text(text: str) -> list:
                 _add(cat.group(1).strip())
             continue
 
-        # ── Format 1: Plain heading line (non-URL, non-# line) ───────────────
-        heading = re.sub(r'\|\s*-?\d+\s*$', '', line).strip()   # strip | ID suffix
+        # Format 1: Plain heading line (non-URL, non-# line)
+        heading = re.sub(r'\|\s*-?\d+\s*$', '', line).strip()
         if heading:
             _add(heading)
 
@@ -88,11 +88,11 @@ def register_auto_topic_handlers(bot: Client):
         topics = parse_topics_from_text(text)
 
         if not topics:
-            # No 📌 topics — let DRM handler process it normally
+            # No topics found — let DRM handler process it normally
             await status.delete()
             return
 
-        # 📌 topics found — handle here, stop propagation to DRM
+        # Topics found — handle here, stop propagation to DRM
         _user_state[m.from_user.id] = {"state": "WAIT_GROUP_ID", "topics": topics}
 
         topic_list = "\n".join(f"{i+1}. {t}" for i, t in enumerate(topics))
@@ -139,9 +139,9 @@ def register_auto_topic_handlers(bot: Client):
             return
 
         topics = state_data["topics"]
-        total = len(topics)
+        total  = len(topics)
         created = 0
-        failed = 0
+        failed  = 0
 
         # Clear state immediately — prevents duplicate triggers
         _user_state.pop(user_id, None)
@@ -150,15 +150,35 @@ def register_auto_topic_handlers(bot: Client):
             f"⏳ Starting topic creation for **{total} topics**..."
         )
 
+        # resolve_peer → InputPeerChannel, then convert to InputChannel
+        try:
+            peer    = await client.resolve_peer(group_chat_id)
+            channel = types.InputChannel(
+                channel_id=peer.channel_id,
+                access_hash=peer.access_hash,
+            )
+        except Exception as e:
+            await progress_msg.edit_text(
+                f"❌ Could not find the group.\n"
+                f"Check the Chat ID and make sure the bot is a member.\n`{e}`"
+            )
+            return
+
         for i, topic_name in enumerate(topics, start=1):
-            topic_id, err = await create_forum_topic(client, group_chat_id, topic_name)
-            if topic_id:
+            try:
+                await client.invoke(
+                    functions.channels.CreateForumTopic(
+                        channel=channel,
+                        title=topic_name,
+                        random_id=random.randint(1, 2**31),
+                    )
+                )
                 created += 1
                 await progress_msg.edit_text(
                     f"⏳ ({i}/{total}) ✅ Created: **{topic_name}**"
                 )
-            else:
-                err_str = str(err)
+            except Exception as e:
+                err_str = str(e)
                 failed += 1
                 logging.warning(f"[AutoTopic] Failed to create '{topic_name}': {err_str}")
 
