@@ -220,7 +220,7 @@ async def create_forum_topic(client: Client, chat_id: int, topic_name: str, icon
         peer = await client.resolve_peer(chat_id)
         r = await client.invoke(
             pyrogram_raw.functions.messages.CreateForumTopic(
-                channel=peer,
+                peer=peer,
                 title=topic_name,
                 random_id=client.rnd_id(),
                 icon_color=icon_color,
