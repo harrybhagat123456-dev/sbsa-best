@@ -213,3 +213,88 @@ def register_commands_handlers(bot):
         )
         await msg.edit_text(text)
 
+
+    @bot.on_message(filters.command("help") & filters.private)
+    async def help_command(client, message: Message):
+        is_owner = message.from_user and message.from_user.id == OWNER
+
+        user_section = (
+            "<b>📥 Downloads</b>\n"
+            "➥ /stop – Stop ongoing process\n"
+            "➥ /history – Resume batch download from TXT\n"
+            "➥ /viewhistory – View download history\n"
+            "➥ /clearhistory – Clear download history\n\n"
+
+            "<b>🎬 YouTube</b>\n"
+            "➥ /ytm – YouTube → MP3 downloader\n"
+            "➥ /y2t – YouTube → TXT converter\n"
+            "➥ /yth – YouTube MP3 with resume\n\n"
+
+            "<b>🔧 Tools</b>\n"
+            "➥ /t2t – Text → TXT generator\n"
+            "➥ /t2h – TXT → HTML converter\n"
+            "➥ /json – JSON → TXT link converter\n"
+            "➥ /cookies – Upload YouTube cookies\n"
+            "➥ /getcookies – Show current cookies\n"
+            "➥ /ytcookies – Paste/upload YT cookies\n\n"
+
+            "<b>📁 Info & Storage</b>\n"
+            "➥ /id – Get chat/user ID\n"
+            "➥ /info – Your Telegram info\n"
+            "➥ /logs – View bot activity log\n"
+            "➥ /storage – Disk usage\n"
+            "➥ /cleanup – Delete downloaded files\n"
+            "➥ /mini – Browse uploads by date\n\n"
+
+            "<b>🧵 Forum Topics</b>\n"
+            "➥ /createtopic – Create a forum topic\n"
+            "➥ /maketopics – Bulk-create topics from TXT\n"
+            "➥ /topics – List topics in a group\n"
+            "➥ /settopic – Set active topic\n"
+            "➥ /defaulttopic – Set default fallback topic\n"
+            "➥ /topicid – Get topic ID (run inside a topic)\n"
+            "➥ /gettopicid [GROUP_ID] – Save topic(s) to memory\n"
+            "    <i>With group ID = broadcast to all topics</i>\n"
+            "➥ /linktopics – Match saved topics with TXT\n"
+            "➥ /showtopics – Show saved topics\n"
+            "➥ /showmapping – Show topic→TXT mapping\n"
+            "➥ /parsetopics – Preview topics in TXT file\n"
+            "➥ /clearmemory – Clear saved topic memory\n"
+            "➥ /cleartopicmap [GROUP_ID] – Wipe topic mapping\n"
+            "➥ /fixmapping [GROUP_ID] – Fix subtopic IDs\n\n"
+
+            "<b>🎭 Render Accounts</b>\n"
+            "➥ /addaccount – Add Render account slot\n"
+            "➥ /listaccounts – List registered accounts\n"
+            "➥ /removeaccount – Remove account slot\n"
+            "➥ /switchslot – Switch active account\n"
+        )
+
+        owner_section = (
+            "\n<b>👑 Owner Only</b>\n"
+            "➥ /broadcast – Broadcast to all users\n"
+            "➥ /broadusers – Show broadcast users\n"
+            "➥ /addauth USER_ID – Authorize a user\n"
+            "➥ /rmauth USER_ID – Remove authorization\n"
+            "➥ /users – List premium users\n"
+            "➥ /allhistory – View all users' history\n"
+            "➥ /resetallhistory – Clear all history\n"
+            "➥ /reset – Restart the bot\n"
+        )
+
+        text = (
+            "<b>🤖 SAINI DRM Bot — All Commands</b>\n"
+            "▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰\n\n"
+            + user_section
+            + (owner_section if is_owner else "")
+            + "\n▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰\n"
+            f"➠ Made by <a href='tg://openmessage?user_id={OWNER}'>{CREDIT}</a>"
+        )
+
+        MAX = 3800
+        chunks = [text[i:i+MAX] for i in range(0, len(text), MAX)]
+        await message.reply_text(chunks[0], parse_mode="html", disable_web_page_preview=True)
+        for c in chunks[1:]:
+            await message.reply_text(c, parse_mode="html", disable_web_page_preview=True)
+
+
