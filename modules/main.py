@@ -250,8 +250,10 @@ def reset_and_set_commands():
         {"command": "t2t",         "description": "📟 Text to TXT generator"},
         {"command": "t2h",         "description": "🌐 TXT to HTML converter"},
         {"command": "json",        "description": "🔄 JSON to TXT link converter"},
-        {"command": "id",          "description": "🆔 Get User/Chat/Group ID"},
+        {"command": "id",           "description": "🆔 Get User/Chat/Group ID"},
         {"command": "maketopics",  "description": "🧵 Bulk-create forum topics from TXT file"},
+        {"command": "clearmemory", "description": "🗑️ Clear saved topic memory"},
+        {"command": "cleartopicmap","description": "🗑️ Wipe txt→topic mapping for a group"},
     ]
 
     # In private chats: full user command list
@@ -279,7 +281,9 @@ def reset_and_set_commands():
         {"command": "clearhistory",   "description": "🗑️ Clear Download History"},
         {"command": "mini",           "description": "📅 Browse uploaded content by date"},
         {"command": "topicnav",       "description": "📚 Repost uploaded topic navigation"},
-        {"command": "maketopics",     "description": "🧵 Bulk-create forum topics from TXT file"},
+        {"command": "maketopics",      "description": "🧵 Bulk-create forum topics from TXT file"},
+        {"command": "clearmemory",    "description": "🗑️ Clear saved topic memory"},
+        {"command": "cleartopicmap",  "description": "🗑️ Wipe txt→topic mapping for a group"},
         {"command": "addaccount",     "description": "➕ Add a new Render account slot"},
         {"command": "listaccounts",   "description": "📋 List all registered Render accounts"},
         {"command": "removeaccount",  "description": "🗑️ Remove a Render account slot"},
