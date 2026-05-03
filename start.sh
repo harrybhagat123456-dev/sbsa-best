@@ -3,6 +3,11 @@
 # Use PORT from environment (Render sets it), default to 5000 for Replit
 export PORT="${PORT:-5000}"
 
+# ── Auto-push latest changes to GitHub on every startup ───────────────────────
+echo "[AUTOPUSH] Pushing latest changes to GitHub..."
+python3 auto_push.sh
+echo "[AUTOPUSH] Done."
+
 # ── Start the alive/web server in the background ──────────────────────────────
 python3 alive.py &
 ALIVE_PID=$!
