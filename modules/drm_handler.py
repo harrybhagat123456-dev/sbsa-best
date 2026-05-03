@@ -1165,7 +1165,7 @@ async def _drm_handler_impl(bot: Client, m: Message):
             # ── Update live progress ──────────────────────────────────────────
             try:
                 from progress_tracker import update as _pt_update
-                _pt_update(i + 1, len(links), _raw_name[:80], count - 1, failed_count)
+                _pt_update(i + 1, len(links), _raw_name[:80], count, failed_count)
             except Exception:
                 pass
             # ─────────────────────────────────────────────────────────────────
