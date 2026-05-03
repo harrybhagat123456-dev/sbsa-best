@@ -31,7 +31,7 @@ trap cleanup SIGTERM SIGINT
 # The alive server keeps running the whole time so Render never drops the service.
 while true; do
     echo "[START] Launching Telegram bot..."
-    python3 modules/main.py &
+    (cd modules && python3 main.py) &
     BOT_PID=$!
 
     # Wait for the bot process to exit (for any reason)
