@@ -1242,13 +1242,61 @@ async def link_topics_command(client: Client, message: Message):
 # ---------------------------------------------------------------------------
 
 def _parse_pinned_topics(text: str) -> list:
-    """Extract topic names from lines like: 📌 Name — 123 links"""
+    """
+    Extract unique topic names from a .txt file.
+    Handles ALL formats used by this bot:
+      1. [Topic Name]          — bracket prefix (standalone or before URL)
+      2. (Topic Name)          — paren prefix at start of a link name
+      3. Plain heading lines   — any non-URL, non-# line (e.g. "Arithmetic")
+      4. 📌 Topic Name — X    — pinned-list format
+    Returns a deduped list in order of first appearance.
+    """
+    seen   = set()
     topics = []
-    for line in text.splitlines():
-        if "📌" in line and "—" in line:
-            name = line.split("📌")[1].split("—")[0].strip()
-            if name:
-                topics.append(name[:128])
+
+    def _add(name: str):
+        name = name.strip()[:128]
+        key  = name.lower()
+        if key and key not in seen:
+            seen.add(key)
+            topics.append(name)
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith('#'):
+            continue
+
+        # Format 4: 📌 Topic Name — 123 links
+        if '📌' in line and '—' in line:
+            try:
+                name = line.split('📌')[1].split('—')[0].strip()
+                if name:
+                    _add(name)
+            except Exception:
+                pass
+            continue
+
+        # Format 2: [Topic Name] standalone or inline prefix before URL
+        bracket = re.match(r'^\[([^\]]+)\]\s*(.*)', line)
+        if bracket:
+            inner = bracket.group(1).strip()
+            if not inner.lstrip('-').isdigit():   # skip numeric IDs like [12345]
+                _add(inner)
+            continue
+
+        # Format 3: (Topic Name) at start of a content line
+        if '://' in line or ': //' in line:
+            name_part = re.split(r':\s*//', line, maxsplit=1)[0].strip()
+            cat = re.match(r'^\(([^)]+)\)', name_part)
+            if cat:
+                _add(cat.group(1).strip())
+            continue
+
+        # Format 1: Plain heading line (non-URL, non-# line)
+        heading = re.sub(r'\|\s*-?\d+\s*$', '', line).strip()
+        if heading:
+            _add(heading)
+
     return topics
 
 
