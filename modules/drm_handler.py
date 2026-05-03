@@ -897,9 +897,10 @@ async def _drm_handler_impl(bot: Client, m: Message):
                 await _tid_prompt.delete()
 
             # Apply all resolved topic IDs to links (with parent fallback)
+            # Config mapping always wins over any [id] hardcoded in the TXT file
             for _i in range(len(link_topic_ids)):
-                if link_topic_ids[_i] is None and link_chapters[_i]:
-                    _c = link_chapters[_i]
+                _c = link_chapters[_i] if _i < len(link_chapters) else ""
+                if _c:
                     _resolved = _resolve_from_map(_c, _named_topic_id_map)
                     if _resolved is not None:
                         link_topic_ids[_i] = _resolved
