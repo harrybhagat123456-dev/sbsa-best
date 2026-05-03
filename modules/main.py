@@ -268,6 +268,7 @@ def reset_and_set_commands():
         {"command": "clearmemory",  "description": "🗑️ Clear saved topic memory"},
         {"command": "mini",         "description": "📅 Browse uploaded content by date"},
         {"command": "topicnav",     "description": "📚 Repost uploaded topic navigation"},
+        {"command": "maketopics",   "description": "🧵 Bulk-create forum topics from TXT file"},
     ]
 
     # Owner gets extra admin commands in private
@@ -283,6 +284,8 @@ def reset_and_set_commands():
         {"command": "addaccount",      "description": "➕ Add a new Render account slot"},
         {"command": "listaccounts",    "description": "📋 List all registered Render accounts"},
         {"command": "removeaccount",   "description": "🗑️ Remove a Render account slot"},
+        {"command": "switchslot",      "description": "🔄 Switch active Render account slot"},
+        {"command": "maketopics",      "description": "🧵 Bulk-create forum topics from TXT file"},
     ]
 
     # Default menu: keep user commands visible from the Telegram menu button
