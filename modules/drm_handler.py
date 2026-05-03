@@ -783,9 +783,26 @@ async def _drm_handler_impl(bot: Client, m: Message):
     # ── Topic ID resolution for named topics ──────────────────────────────────
     # Priority: 1) history (previous run)  2) /linktopics mapping  3) interactive asking
     _named_topic_id_map = {}  # topic_name → telegram topic_id (int)
+
+    def _resolve_from_map(name: str, src: dict):
+        """Exact match, then parent fallback: 'English/Grammar' → 'English'."""
+        if name in src:
+            return src[name]
+        _p = name.split('/')[0].strip()
+        if _p != name and _p in src:
+            return src[_p]
+        return None
+
     # Pre-populate from history so resume goes straight to upload
     if _hist_topic_map:
         _named_topic_id_map.update(_hist_topic_map)
+        # Also add parent-resolved entries for any chapter not explicitly in history
+        for _chap in set(link_chapters):
+            if _chap and _chap not in _named_topic_id_map:
+                _v = _resolve_from_map(_chap, _hist_topic_map)
+                if _v is not None:
+                    _named_topic_id_map[_chap] = _v
+
     if m.document:
         _unnamed_topics = []
         _seen_unnamed = set()
@@ -795,7 +812,7 @@ async def _drm_handler_impl(bot: Client, m: Message):
                 _unnamed_topics.append(_chap)
 
         if _unnamed_topics:
-            # Try saved mapping first (from /linktopics)
+            # Try saved mapping first (from /linktopics or auto_topic_creator)
             try:
                 from modules.topic_handler import get_txt_topic_mapping
             except ImportError:
@@ -811,12 +828,14 @@ async def _drm_handler_impl(bot: Client, m: Message):
                 except Exception:
                     _saved_map = {}
 
-            # Apply saved mapping where possible
+            # Apply saved mapping — exact match first, then parent fallback
+            # e.g. "English/Grammar Study Material" → falls back to "English" topic
             _still_unresolved = []
             for _topic_name in _unnamed_topics:
-                if _topic_name in _saved_map:
-                    _named_topic_id_map[_topic_name] = _saved_map[_topic_name]
-                else:
+                _tid_found = _resolve_from_map(_topic_name, _saved_map)
+                if _tid_found is not None:
+                    _named_topic_id_map[_topic_name] = _tid_found
+                elif _topic_name not in _named_topic_id_map:
                     _still_unresolved.append(_topic_name)
 
             if _saved_map and not _still_unresolved:
@@ -877,10 +896,13 @@ async def _drm_handler_impl(bot: Client, m: Message):
 
                 await _tid_prompt.delete()
 
-            # Apply all resolved topic IDs to links
+            # Apply all resolved topic IDs to links (with parent fallback)
             for _i in range(len(link_topic_ids)):
-                if link_topic_ids[_i] is None and link_chapters[_i] in _named_topic_id_map:
-                    link_topic_ids[_i] = _named_topic_id_map[link_chapters[_i]]
+                if link_topic_ids[_i] is None and link_chapters[_i]:
+                    _c = link_chapters[_i]
+                    _resolved = _resolve_from_map(_c, _named_topic_id_map)
+                    if _resolved is not None:
+                        link_topic_ids[_i] = _resolved
 
             # Save full topic map to history so future resumes need zero prompts
             if _hist_file_hash and _HISTORY_ENABLED and _named_topic_id_map:
