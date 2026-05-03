@@ -1237,6 +1237,144 @@ async def link_topics_command(client: Client, message: Message):
 
 
 # ---------------------------------------------------------------------------
+# /maketopics — bulk-create forum topics from a .txt file
+# Parses lines like: 📌 Topic Name — 123 links
+# ---------------------------------------------------------------------------
+
+def _parse_pinned_topics(text: str) -> list:
+    """Extract topic names from lines like: 📌 Name — 123 links"""
+    topics = []
+    for line in text.splitlines():
+        if "📌" in line and "—" in line:
+            name = line.split("📌")[1].split("—")[0].strip()
+            if name:
+                topics.append(name[:128])
+    return topics
+
+
+async def maketopics_command(client: Client, message: Message):
+    """
+    /maketopics — send a .txt file whose lines look like:
+        📌 Arithmetic — 591 links
+        📌 English/Grammar — 204 links
+    Bot will create those as Telegram forum topics in any group you specify.
+    """
+    if message.from_user and message.from_user.id != OWNER:
+        await message.reply_text("Owner only command.")
+        return
+
+    # Step 1: ask for the .txt file
+    prompt = await message.reply_text(
+        "<b>📂 Send your .txt file now.</b>\n\n"
+        "<i>Each line should look like:</i>\n"
+        "<code>📌 Arithmetic — 591 links</code>\n\n"
+        "<i>Waiting 60 seconds...</i>",
+        parse_mode=enums.ParseMode.HTML,
+    )
+
+    file_msg = await safe_listen(client, message.chat.id, message.from_user.id, timeout=60)
+    if not file_msg:
+        await prompt.edit("<b>❌ Timed out. Run /maketopics again.</b>", parse_mode=enums.ParseMode.HTML)
+        return
+    if not (file_msg.document and file_msg.document.file_name.endswith(".txt")):
+        await prompt.edit("<b>❌ Please send a .txt file.</b>", parse_mode=enums.ParseMode.HTML)
+        return
+
+    await prompt.edit("<b>📥 Reading file...</b>", parse_mode=enums.ParseMode.HTML)
+    path = await file_msg.download()
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+    finally:
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+
+    topics = _parse_pinned_topics(content)
+    if not topics:
+        await prompt.edit(
+            "<b>❌ No topics found.</b>\n\n"
+            "Make sure lines follow this format:\n"
+            "<code>📌 Topic Name — 123 links</code>",
+            parse_mode=enums.ParseMode.HTML,
+        )
+        return
+
+    # Step 2: show parsed list, ask for Group Chat ID
+    lines = [f"<b>✅ Found {len(topics)} topics:</b>"]
+    for i, t in enumerate(topics, 1):
+        lines.append(f"{i}. {t}")
+    lines.append("")
+    lines.append("<b>Now send the Group Chat ID</b> where I should create these topics.")
+    lines.append("<i>(e.g. -1001234567890 — get it via @getidsbot)</i>")
+
+    await prompt.edit("\n".join(lines), parse_mode=enums.ParseMode.HTML)
+
+    # Step 3: wait for Group Chat ID
+    id_msg = await safe_listen(client, message.chat.id, message.from_user.id, timeout=60)
+    if not id_msg:
+        await prompt.edit("<b>❌ Timed out. Run /maketopics again.</b>", parse_mode=enums.ParseMode.HTML)
+        return
+
+    raw_id = id_msg.text.strip() if id_msg.text else ""
+    try:
+        group_chat_id = int(raw_id)
+    except ValueError:
+        await message.reply_text(
+            "❌ Invalid Chat ID. Please send a number like <code>-1001234567890</code>",
+            parse_mode=enums.ParseMode.HTML,
+        )
+        return
+
+    # Step 4: create topics one by one
+    total   = len(topics)
+    created = 0
+    failed  = 0
+
+    status_msg = await message.reply_text(
+        f"<b>⏳ Starting topic creation for {total} topics...</b>",
+        parse_mode=enums.ParseMode.HTML,
+    )
+
+    for idx, topic_name in enumerate(topics, 1):
+        topic_id, err = await create_forum_topic(client, group_chat_id, topic_name)
+        if err:
+            err_lower = err.lower()
+            if "admin" in err_lower or "forbidden" in err_lower or "manage" in err_lower:
+                await status_msg.edit(
+                    "❌ Bot does not have <b>Manage Topics</b> permission.\n"
+                    "Make it admin with that permission and try again.",
+                    parse_mode=enums.ParseMode.HTML,
+                )
+                return
+            if "chat not found" in err_lower or "peer_id_invalid" in err_lower:
+                await status_msg.edit(
+                    "❌ Group not found. Check the Chat ID and make sure the bot is a member.",
+                    parse_mode=enums.ParseMode.HTML,
+                )
+                return
+            failed += 1
+            await message.reply_text(
+                f"❌ ({idx}/{total}) Failed: <b>{topic_name}</b>\n<i>{err}</i>",
+                parse_mode=enums.ParseMode.HTML,
+            )
+        else:
+            created += 1
+            await message.reply_text(
+                f"✅ ({idx}/{total}) Created: <b>{topic_name}</b>",
+                parse_mode=enums.ParseMode.HTML,
+            )
+        await asyncio.sleep(1.5)
+
+    await status_msg.edit(
+        f"<b>🏁 Done!</b>  ✅ {created} created  ❌ {failed} failed\n\n"
+        f"Send another .txt file with /maketopics to run again.",
+        parse_mode=enums.ParseMode.HTML,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Register
 # ---------------------------------------------------------------------------
 
@@ -1254,6 +1392,7 @@ def register_topic_handlers(bot: Client):
     bot.on_message(filters.command("showtopics"))(showtopics_command)
     bot.on_message(filters.command("showmapping"))(showmapping_command)
     bot.on_message(filters.command("clearmemory"))(clearmemory_command)
+    bot.on_message(filters.command("maketopics") & filters.private)(maketopics_command)
 
     @bot.on_message(filters.group & filters.service)
     async def _on_group_join(client, message: Message):
@@ -1275,4 +1414,4 @@ def register_topic_handlers(bot: Client):
                     print(f"[TopicHandler] Auto-setup failed: {e}")
                 break
 
-    print("[TopicHandler] Handlers registered: /createtopic /topics /settopic /setuptopics /parsetxt /defaulttopic /topicid /gettopicid /parsetopics /linktopics /showtopics /showmapping /clearmemory")
+    print("[TopicHandler] Handlers registered: /createtopic /topics /settopic /setuptopics /parsetxt /defaulttopic /topicid /gettopicid /parsetopics /linktopics /showtopics /showmapping /clearmemory /maketopics")
