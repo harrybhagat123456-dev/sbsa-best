@@ -5,7 +5,7 @@ from pyrogram.types.messages_and_media import message
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, InputMediaPhoto
 # .....,.....,.......,...,.......,....., .....,.....,.......,...,.......,.....,
 import globals
-import render_manager  # noqa — registers handlers automatically
+from render_manager import register_render_manager_handlers
 from logs import logging
 from html_handler import register_html_handlers
 from drm_handler import register_drm_handlers
@@ -195,6 +195,7 @@ register_authorisation_handlers(bot)
 register_drm_handlers(bot)
 register_topic_handlers(bot)
 register_mini_handlers(bot)
+register_render_manager_handlers(bot)
 #==================================================================
 
 def notify_owner():
