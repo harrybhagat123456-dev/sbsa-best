@@ -923,20 +923,49 @@ async def _drm_handler_impl(bot: Client, m: Message):
     else:
         thumb = thumb
 
-    # ── Start progress tracking ───────────────────────────────────────────────
+    # ── Start progress tracking + live Telegram progress message ────────────
+    _tg_prog_msg     = None
+    _tg_prog_counter = 0
+
+    def _build_prog_text(cur, tot, ok, fail, now_file, log_list, done=False, web_url=""):
+        pct    = round(cur / tot * 100, 1) if tot else 0
+        filled = int(pct / 10)
+        bar    = "█" * filled + "░" * (10 - filled)
+        status = "✅ Complete!" if done else f"▶ <i>{(now_file or 'Starting…')[:80]}</i>"
+        txt = (
+            f"<b>📥 {b_name}</b>\n"
+            f"<code>{bar}</code> <b>{pct}%</b>\n"
+            f"🔗 <b>{cur}/{tot}</b>  •  ✅ <b>{ok}</b>  •  ❌ <b>{fail}</b>\n\n"
+            f"{status}"
+        )
+        recent = (log_list or [])[-5:]
+        if recent:
+            txt += "\n\n<b>Recent:</b>"
+            for _le in reversed(recent):
+                _icon  = "✅" if _le.get("ok") else "❌"
+                _lname = (_le.get("name") or "").split("http")[0].strip()[:60]
+                txt += f"\n{_icon} <code>#{_le.get('i',0)}</code> {_lname}"
+        if web_url:
+            txt += f"\n\n🌐 <a href='{web_url}/progress'>Live web view</a>"
+        return txt
+
     try:
         from progress_tracker import start_batch, get_public_url
         _start_idx = int(raw_text) - 1 if raw_text.isdigit() else 0
         start_batch(b_name, file_name if m.document else "direct input", len(links), channel_id, _start_idx)
         _prog_url = get_public_url()
-        if _prog_url:
-            await bot.send_message(
+        try:
+            _tg_prog_msg = await bot.send_message(
                 m.chat.id,
-                f"📊 **Live progress:**\n{_prog_url}/progress",
+                _build_prog_text(_start_idx, len(links), 0, 0, "Starting…", [], web_url=_prog_url),
+                parse_mode=enums.ParseMode.HTML,
                 disable_web_page_preview=True,
             )
+        except Exception:
+            _tg_prog_msg = None
     except Exception:
-        pass
+        _tg_prog_msg  = None
+        _prog_url     = ""
     # ─────────────────────────────────────────────────────────────────────────
 
     try:
@@ -1163,7 +1192,7 @@ async def _drm_handler_impl(bot: Client, m: Message):
 
             _raw_name = links[i][0]
 
-            # ── Update live progress + periodic history save ─────────────────
+            # ── Update live progress + periodic history save + Telegram edit ──
             try:
                 from progress_tracker import update as _pt_update
                 _pt_update(i + 1, len(links), _raw_name[:80], count, failed_count)
@@ -1180,6 +1209,26 @@ async def _drm_handler_impl(bot: Client, m: Message):
                         _he["status"] = "in_progress"
                         _he["updated_at"] = _dtnow.now().isoformat()
                         get_history()._save_history()
+                except Exception:
+                    pass
+            # Edit the live Telegram progress message every 5 files
+            _tg_prog_counter += 1
+            if _tg_prog_msg and (_tg_prog_counter % 5 == 0):
+                try:
+                    import json as _pjson
+                    try:
+                        with open("/tmp/bot_progress.json") as _pf:
+                            _pd = _pjson.load(_pf)
+                    except Exception:
+                        _pd = {}
+                    await _tg_prog_msg.edit_text(
+                        _build_prog_text(
+                            i + 1, len(links), count, failed_count,
+                            _raw_name[:80], _pd.get("log"), web_url=_prog_url
+                        ),
+                        parse_mode=enums.ParseMode.HTML,
+                        disable_web_page_preview=True,
+                    )
                 except Exception:
                     pass
             # ─────────────────────────────────────────────────────────────────
@@ -1763,6 +1812,25 @@ async def _drm_handler_impl(bot: Client, m: Message):
             _pt_finish(success_count, failed_count, b_name)
         except Exception:
             pass
+        # Final edit of live Telegram progress message
+        if _tg_prog_msg:
+            try:
+                import json as _pjson
+                try:
+                    with open("/tmp/bot_progress.json") as _pf:
+                        _pd = _pjson.load(_pf)
+                except Exception:
+                    _pd = {}
+                await _tg_prog_msg.edit_text(
+                    _build_prog_text(
+                        selected_total, len(links), success_count, failed_count,
+                        "Batch complete!", _pd.get("log"), done=True, web_url=_prog_url
+                    ),
+                    parse_mode=enums.ParseMode.HTML,
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                pass
         # ─────────────────────────────────────────────────────────────────────
 
         try:
