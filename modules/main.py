@@ -1,5 +1,5 @@
 import os, re, sys, json, pytz, asyncio, requests, subprocess, random
-from pyrogram import Client, filters
+from pyrogram import Client, filters, enums
 from pyrogram.errors.exceptions.bad_request_400 import StickerEmojiInvalid
 from pyrogram.types.messages_and_media import message
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, InputMediaPhoto
@@ -52,34 +52,43 @@ keyboard = InlineKeyboardMarkup([
 
 @bot.on_message(filters.command("start") & filters.private)
 async def start(bot, m: Message):
-    user_id = m.chat.id
-    if user_id not in TOTAL_USERS:
-        TOTAL_USERS.append(user_id)
-    user = await bot.get_me()
-    mention = user.mention
-    if m.chat.id in AUTH_USERS:
-        caption = (
-            f"𝐇𝐞𝐥𝐥𝐨 𝐃𝐞𝐚𝐫 👋!\n\n"
-            f"➠ 𝐈 𝐚𝐦 𝐚 𝐓𝐞𝐱𝐭 𝐃𝐨𝐰𝐧𝐥𝐨𝐚𝐝𝐞𝐫 𝐁𝐨𝐭\n\n"
-            f"➠ Can Extract Videos & PDFs From Your Text File and Upload to Telegram!\n\n"
-            f"➠ For Guide Use button - **✨ Commands** 📖\n\n"
-            f"➠ 𝐌𝐚𝐝𝐞 𝐁𝐲 : [{CREDIT}](tg://openmessage?user_id={OWNER}) 🦁"
+    try:
+        logging.debug(f"[START_CMD] Fired for user {m.chat.id}")
+        user_id = m.chat.id
+        if user_id not in TOTAL_USERS:
+            TOTAL_USERS.append(user_id)
+        fname = m.from_user.first_name if m.from_user else "User"
+        if m.chat.id in AUTH_USERS:
+            caption = (
+                f"𝐇𝐞𝐥𝐥𝐨 𝐃𝐞𝐚𝐫 👋!\n\n"
+                f"➠ 𝐈 𝐚𝐦 𝐚 𝐓𝐞𝐱𝐭 𝐃𝐨𝐰𝐧𝐥𝐨𝐚𝐝𝐞𝐫 𝐁𝐨𝐭\n\n"
+                f"➠ Can Extract Videos & PDFs From Your Text File and Upload to Telegram!\n\n"
+                f"➠ For Guide Use button — ✨ Commands 📖\n\n"
+                f"➠ 𝐌𝐚𝐝𝐞 𝐁𝐲 : <a href='tg://openmessage?user_id={OWNER}'>{CREDIT}</a> 🦁"
+            )
+        else:
+            caption = (
+                f"𝐇𝐞𝐥𝐥𝐨 <b>{fname}</b> 👋!\n\n"
+                f"➠ 𝐈 𝐚𝐦 𝐚 𝐓𝐞𝐱𝐭 𝐃𝐨𝐰𝐧𝐥𝐨𝐚𝐝𝐞𝐫 𝐁𝐨𝐭\n\n"
+                f"➠ Can Extract Videos &amp; PDFs From Your Text File and Upload to Telegram!\n\n"
+                f"<b>You are currently using the free version.</b> 🆓\n"
+                f"<b>Want to get started? Press /id</b>\n\n"
+                f"💬 𝐂𝐨𝐧𝐭𝐚𝐜𝐭 : <a href='tg://openmessage?user_id={OWNER}'>{CREDIT}</a> to Get The Subscription ! 🔓\n"
+            )
+        await bot.send_photo(
+            chat_id=m.chat.id,
+            photo="https://iili.io/KuCBoV2.jpg",
+            caption=caption,
+            parse_mode=enums.ParseMode.HTML,
+            reply_markup=keyboard
         )
-    else:
-        caption = (
-            f"𝐇𝐞𝐥𝐥𝐨 **{m.from_user.first_name}** 👋!\n\n"
-            f"➠ 𝐈 𝐚𝐦 𝐚 𝐓𝐞𝐱𝐭 𝐃𝐨𝐰𝐧𝐥𝐨𝐚𝐝𝐞𝐫 𝐁𝐨𝐭\n\n"
-            f"➠ Can Extract Videos & PDFs From Your Text File and Upload to Telegram!\n\n"
-            f"**You are currently using the free version.** 🆓\n"
-            f"**Want to get started? Press /id**\n\n"
-            f"💬 𝐂𝐨𝐧𝐭𝐚𝐜𝐭 : [{CREDIT}](tg://openmessage?user_id={OWNER}) to Get The Subscription ! 🔓\n"
-        )
-    await bot.send_photo(
-        chat_id=m.chat.id,
-        photo="https://iili.io/KuCBoV2.jpg",
-        caption=caption,
-        reply_markup=keyboard
-    )
+        logging.debug(f"[START_CMD] Response sent to {m.chat.id}")
+    except Exception as e:
+        logging.exception(f"[START_CMD] Error: {e}")
+        try:
+            await m.reply_text("✅ Bot is alive and running!")
+        except Exception:
+            pass
     
 # .....,.....,.......,...,.......,....., .....,.....,.......,...,.......,.....,
 @bot.on_callback_query(filters.regex("back_to_main_menu"))
