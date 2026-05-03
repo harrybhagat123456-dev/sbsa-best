@@ -1,0 +1,159 @@
+Here is the fully refined, precise Replit Agent prompt:
+
+---
+
+> ## Telegram Forum Topic Auto-Creator Bot
+>
+> Build a Python Telegram bot in a single file called `main.py`. Read every instruction carefully before writing any code.
+>
+> ---
+>
+> ### TECH STACK
+> ```
+> python-telegram-bot==20.7
+> python-dotenv
+> ```
+> Create a `requirements.txt` with exactly those two lines.
+>
+> ---
+>
+> ### ENVIRONMENT VARIABLES
+> Create a `.env` file with only this variable:
+> ```
+> BOT_TOKEN=your_bot_token_here
+> ```
+> Load it at the top of `main.py` using `python-dotenv` and `os.getenv()`. Never hardcode the token.
+>
+> ---
+>
+> ### EXACT BOT FLOW (follow this precisely, no deviations)
+>
+> **Step 1 — User sends a `.txt` file**
+> - Bot receives the `.txt` document
+> - Bot downloads and reads the file content
+> - Bot parses topic names from it (see Parsing Logic below)
+> - Bot stores the parsed topic list in `context.user_data["topics"]`
+> - Bot replies with:
+>   ```
+>   ✅ Found {count} topics:
+>   1. Arithmetic
+>   2. Advance/Class PNG
+>   ... (list all of them)
+>
+>   Now send me the Group Chat ID where I should create these topics.
+>   (It looks like: -1001234567890)
+>   ```
+> - Bot then waits for next input → move to state `WAIT_GROUP_ID`
+>
+> **Step 2 — User sends the Group Chat ID as a text message**
+> - Bot reads the text as `group_chat_id`
+> - Bot tries to convert it to `int`. If it fails, reply: `❌ Invalid Chat ID. Please send a number like -1001234567890` and stay in state `WAIT_GROUP_ID`
+> - If valid, bot replies: `⏳ Starting topic creation for {count} topics...`
+> - Bot loops through `context.user_data["topics"]` and for each one:
+>   - Calls `await context.bot.create_forum_topic(chat_id=group_chat_id, name=topic_name)`
+>   - Sends progress message: `✅ (3/30) Created: Arithmetic`
+>   - Waits `await asyncio.sleep(1.5)` between each call
+>   - Wraps each call in its own `try/except` block
+>   - On exception, sends: `❌ (3/30) Failed: Arithmetic — {error reason}`
+> - After all topics are done, sends final summary:
+>   ```
+>   🏁 Done! ✅ 28 created  ❌ 2 failed
+>   Send another .txt file to start again.
+>   ```
+> - Return `ConversationHandler.END`
+>
+> ---
+>
+> ### PARSING LOGIC
+> The `.txt` file will contain lines like:
+> ```
+> 📌 Arithmetic — 591 links
+> 📌 Advance/Class PNG — 144 links
+> 📌 English/Grammar Study Material — 204 links
+> ```
+> Extract ONLY the topic name between `📌 ` and ` —` (the em dash `—`, not a regular hyphen `-`).
+>
+> Use this exact logic per line:
+> ```python
+> if "📌" in line and "—" in line:
+>     name = line.split("📌")[1].split("—")[0].strip()
+>     if name:
+>         topics.append(name[:128])  # Telegram max is 128 chars
+> ```
+> Skip all other lines silently. Return the list.
+>
+> ---
+>
+> ### CONVERSATIONHANDLER SETUP
+> Use `ConversationHandler` from `telegram.ext` with exactly two states:
+> ```python
+> WAIT_GROUP_ID = 1
+> ```
+> - `entry_points`: `MessageHandler(filters.Document.TXT, handle_file)`
+> - `states`:
+>   - `WAIT_GROUP_ID`: `[MessageHandler(filters.TEXT & ~filters.COMMAND, handle_group_id)]`
+> - `fallbacks`: empty list `[]`
+> - `allow_reentry=True`
+>
+> ---
+>
+> ### ERROR HANDLING RULES
+> Inside `handle_group_id`, wrap the entire topic loop in a top-level `try/except`. Inside the loop, each `create_forum_topic` call must have its own `try/except` and must NOT break the loop on failure.
+>
+> If `create_forum_topic` raises an exception containing `"not enough rights"` or `"TOPIC_CREATE_FORBIDDEN"`, immediately stop the loop and send:
+> `❌ Bot does not have Manage Topics permission in this group. Make it admin with that permission.`
+> Then return `ConversationHandler.END`.
+>
+> If the exception contains `"chat not found"`, stop loop and send:
+> `❌ Group not found. Check the Chat ID and make sure the bot is a member of the group.`
+> Then return `ConversationHandler.END`.
+>
+> For all other per-topic errors, just log and continue the loop.
+>
+> ---
+>
+> ### IMPORTS TO USE
+> ```python
+> import os
+> import re
+> import asyncio
+> import logging
+> from dotenv import load_dotenv
+> from telegram import Update
+> from telegram.ext import (
+>     ApplicationBuilder,
+>     ContextTypes,
+>     ConversationHandler,
+>     MessageHandler,
+>     filters,
+> )
+> ```
+>
+> ---
+>
+> ### ENTRY POINT
+> ```python
+> if __name__ == "__main__":
+>     load_dotenv()
+>     BOT_TOKEN = os.getenv("BOT_TOKEN")
+>     app = ApplicationBuilder().token(BOT_TOKEN).build()
+>     app.add_handler(conv_handler)
+>     app.run_polling()
+> ```
+>
+> ---
+>
+> ### STRICT RULES FOR CODE QUALITY
+> 1. Do NOT add any `CommandHandler` of any kind
+> 2. Do NOT import anything that is not listed in the imports above
+> 3. Every `async` function must use `await` correctly — no blocking calls
+> 4. Add `logging.basicConfig(level=logging.INFO)` at the top so errors print to console
+> 5. After writing the code, show only the `.env` variable names the user needs to fill
+
+---
+
+After the code is built, you only need to fill:
+- `BOT_TOKEN` → from @BotFather
+- Bot must be **admin** in the group with **Manage Topics** permission
+- Group must have **Topics enabled** in settings
+- Get the group Chat ID via @getidsbot
