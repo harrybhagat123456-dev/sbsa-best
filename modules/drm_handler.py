@@ -367,8 +367,8 @@ async def _drm_handler_impl(bot: Client, m: Message):
                     _summary = get_history().get_progress_summary(_fhash)
                     _is_res = (
                         _summary.get("can_resume") and
-                        _summary.get("completed", 0) > 0 and
-                        _summary.get("status") != "completed"
+                        _summary.get("status") == "in_progress" and
+                        _ridx > 0
                     )
                     if _is_res:
                         _saved_meta = (get_history().get_entry(_fhash) or {}).get("metadata", {})
@@ -1162,12 +1162,25 @@ async def _drm_handler_impl(bot: Client, m: Message):
 
             _raw_name = links[i][0]
 
-            # ── Update live progress ──────────────────────────────────────────
+            # ── Update live progress + periodic history save ─────────────────
             try:
                 from progress_tracker import update as _pt_update
                 _pt_update(i + 1, len(links), _raw_name[:80], count, failed_count)
             except Exception:
                 pass
+            # Save resume position to history every 5 files so auto-resume works
+            if _hist_file_hash and _HISTORY_ENABLED and i > 0 and (i % 5) == 0:
+                try:
+                    _he = get_history().get_entry(_hist_file_hash)
+                    if _he:
+                        from datetime import datetime as _dtnow
+                        _he["metadata"]["last_successful_index"] = i - 1
+                        _he["current_index"] = i
+                        _he["status"] = "in_progress"
+                        _he["updated_at"] = _dtnow.now().isoformat()
+                        get_history()._save_history()
+                except Exception:
+                    pass
             # ─────────────────────────────────────────────────────────────────
 
             # Extract content date from {DATE-DD-Month-YYYY} before stripping
