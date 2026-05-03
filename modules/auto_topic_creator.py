@@ -1,10 +1,9 @@
 import re
 import asyncio
-import random
 from pyrogram import Client, filters
 from pyrogram.types import Message
-from pyrogram import raw
 from logs import logging
+from topic_handler import create_forum_topic
 
 # In-memory state: {user_id: {"state": "WAIT_GROUP_ID", "topics": [...]}}
 _user_state = {}
@@ -152,23 +151,16 @@ def register_auto_topic_handlers(bot: Client):
         )
 
         for i, topic_name in enumerate(topics, start=1):
-            try:
-                peer = await client.resolve_peer(group_chat_id)
-                await client.invoke(
-                    raw.functions.channels.CreateForumTopic(
-                        channel=peer,
-                        title=topic_name,
-                        random_id=random.randint(1, 2**31),
-                    )
-                )
+            topic_id, err = await create_forum_topic(client, group_chat_id, topic_name)
+            if topic_id:
                 created += 1
                 await progress_msg.edit_text(
                     f"⏳ ({i}/{total}) ✅ Created: **{topic_name}**"
                 )
-            except Exception as e:
-                err_str = str(e)
+            else:
+                err_str = str(err)
                 failed += 1
-                logging.warning(f"[AutoTopic] Failed to create '{topic_name}': {e}")
+                logging.warning(f"[AutoTopic] Failed to create '{topic_name}': {err_str}")
 
                 if "CHAT_ADMIN_REQUIRED" in err_str or "not enough rights" in err_str.lower():
                     await progress_msg.edit_text(
