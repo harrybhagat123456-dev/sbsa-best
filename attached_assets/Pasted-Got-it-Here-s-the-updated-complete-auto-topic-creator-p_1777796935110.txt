@@ -1,0 +1,227 @@
+Got it. Here's the updated **complete `auto_topic_creator.py`** — the key addition is a `fetch_existing_topics()` function that pulls all existing topic names+IDs from the group first, then skips creation for duplicates and just maps them:
+
+```python
+import random
+import asyncio
+from pyrogram import Client, filters
+from pyrogram.raw import functions, types
+from pyrogram.types import Message
+from logs import logging
+
+_user_state = {}
+
+def parse_topics_from_text(text: str) -> list:
+    topics = []
+    for line in text.splitlines():
+        if "📌" in line and "—" in line:
+            try:
+                name = line.split("📌")[1].split("—")[0].strip()
+                if name:
+                    topics.append(name[:128])
+            except Exception:
+                continue
+    return topics
+
+async def fetch_existing_topics(client: Client, channel) -> dict:
+    """
+    Fetches ALL existing forum topics from the group.
+    Returns a dict: {topic_title_lowercase: topic_id}
+    Handles pagination automatically.
+    """
+    existing = {}
+    offset_date = 0
+    offset_id = 0
+    offset_topic = 0
+
+    while True:
+        try:
+            result = await client.invoke(
+                functions.channels.GetForumTopics(
+                    channel=channel,
+                    offset_date=offset_date,
+                    offset_id=offset_id,
+                    offset_topic=offset_topic,
+                    limit=100
+                )
+            )
+        except Exception as e:
+            logging.warning(f"[AutoTopic] Failed to fetch existing topics: {e}")
+            break
+
+        for topic in result.topics:
+            existing[topic.title.lower().strip()] = topic.id
+
+        # If we got fewer than 100, we've reached the end
+        if len(result.topics) < 100:
+            break
+
+        # Pagination — set offsets from last topic
+        last = result.topics[-1]
+        offset_topic = last.id
+        # offset_date and offset_id come from the top_message in messages list
+        # find the message matching last topic's top_message
+        offset_id = getattr(last, "top_message", 0)
+        offset_date = 0  # let server decide
+
+    return existing  # e.g. {"arithmetic": 123, "advance/class png": 456}
+
+def register_auto_topic_handlers(bot: Client):
+
+    @bot.on_message(filters.private & filters.document)
+    async def handle_txt_file(client: Client, m: Message):
+        if not m.document or not m.document.file_name.endswith(".txt"):
+            return
+
+        status = await m.reply_text("📥 Reading your file...")
+
+        try:
+            file_path = await client.download_media(m, in_memory=True)
+            text = bytes(file_path.getbuffer()).decode("utf-8", errors="ignore")
+        except Exception as e:
+            await status.edit_text(f"❌ Failed to read file: {e}")
+            return
+
+        topics = parse_topics_from_text(text)
+
+        if not topics:
+            await status.edit_text(
+                "❌ No topics found.\nMake sure lines look like:\n`📌 Topic Name — 123 links`"
+            )
+            return
+
+        _user_state[m.from_user.id] = {"state": "WAIT_GROUP_ID", "topics": topics}
+
+        topic_list = "\n".join(f"{i+1}. {t}" for i, t in enumerate(topics))
+        await status.edit_text(
+            f"✅ Found **{len(topics)} topics**:\n\n{topic_list}\n\n"
+            f"Now send me the **Group Chat ID** where I should create these topics.\n"
+            f"_(Looks like: `-1001234567890`)_"
+        )
+
+    @bot.on_message(filters.private & filters.text & ~filters.command(
+        ["start","stop","id","info","logs","reset","cookies","getcookies",
+         "ytcookies","ytcookie","y2t","ytm","t2t","t2h","json","history",
+         "yth","viewhistory","clearhistory","createtopic","topics","settopic",
+         "setuptopics","parsetxt","defaulttopic","parsetopics","topicid",
+         "gettopicid","linktopics","showtopics","showmapping","clearmemory",
+         "mini","topicnav","broadcast","broadusers","addauth","rmauth",
+         "users","allhistory","resetallhistory","addaccount","listaccounts","removeaccount"]
+    ))
+    async def handle_group_id_input(client: Client, m: Message):
+        user_id = m.from_user.id
+        state_data = _user_state.get(user_id)
+
+        if not state_data or state_data.get("state") != "WAIT_GROUP_ID":
+            return
+
+        raw_id = m.text.strip()
+        try:
+            group_chat_id = int(raw_id)
+        except ValueError:
+            await m.reply_text("❌ Invalid Chat ID. Send a number like `-1001234567890`")
+            return
+
+        topics = state_data["topics"]
+        total = len(topics)
+        _user_state.pop(user_id, None)
+
+        progress_msg = await m.reply_text("🔍 Fetching existing topics from group...")
+
+        # Resolve channel
+        try:
+            peer = await client.resolve_peer(group_chat_id)
+            channel = types.InputChannel(
+                channel_id=peer.channel_id,
+                access_hash=peer.access_hash
+            )
+        except Exception as e:
+            await progress_msg.edit_text(
+                f"❌ Could not find the group. Check the Chat ID and make sure bot is a member.\n`{e}`"
+            )
+            return
+
+        # Fetch all existing topics first
+        existing_topics = await fetch_existing_topics(client, channel)
+        skipped = 0
+        created = 0
+        failed = 0
+        mapping = {}  # {topic_name: thread_id}
+
+        await progress_msg.edit_text(
+            f"✅ Found **{len(existing_topics)}** existing topics in group.\n"
+            f"⏳ Now processing **{total}** topics from your file..."
+        )
+
+        for i, topic_name in enumerate(topics, start=1):
+            name_key = topic_name.lower().strip()
+
+            # Topic already exists — just map it, don't recreate
+            if name_key in existing_topics:
+                thread_id = existing_topics[name_key]
+                mapping[topic_name] = thread_id
+                skipped += 1
+                await progress_msg.edit_text(
+                    f"⏳ ({i}/{total}) ♻️ Already exists: **{topic_name}** → ID `{thread_id}`"
+                )
+                await asyncio.sleep(0.3)
+                continue
+
+            # Topic doesn't exist — create it
+            try:
+                result = await client.invoke(
+                    functions.channels.CreateForumTopic(
+                        channel=channel,
+                        title=topic_name,
+                        random_id=random.randint(1, 2**31)
+                    )
+                )
+                # Extract new thread_id from result updates
+                new_thread_id = None
+                for update in getattr(result, "updates", []):
+                    if hasattr(update, "id"):
+                        new_thread_id = update.id
+                        break
+
+                mapping[topic_name] = new_thread_id
+                created += 1
+                await progress_msg.edit_text(
+                    f"⏳ ({i}/{total}) ✅ Created: **{topic_name}** → ID `{new_thread_id}`"
+                )
+
+            except Exception as e:
+                err_str = str(e)
+                failed += 1
+                logging.warning(f"[AutoTopic] Failed '{topic_name}': {e}")
+
+                if "CHAT_ADMIN_REQUIRED" in err_str or "not enough rights" in err_str.lower():
+                    await progress_msg.edit_text(
+                        "❌ Bot needs **Manage Topics** admin permission in the group."
+                    )
+                    return
+
+                await progress_msg.edit_text(
+                    f"⏳ ({i}/{total}) ❌ Failed: **{topic_name}**\n`{err_str[:100]}`"
+                )
+
+            await asyncio.sleep(1.5)
+
+        await progress_msg.edit_text(
+            f"🏁 **Done!**\n\n"
+            f"✅ {created} created\n"
+            f"♻️ {skipped} already existed (mapped)\n"
+            f"❌ {failed} failed\n\n"
+            f"Send another `.txt` file to start again."
+        )
+```
+
+The key logic added is:
+
+```
+Before loop → fetch ALL existing topics → build {name: thread_id} dict
+  ↓
+For each topic in file:
+  name already in dict? → skip creation, save ID for mapping
+  not in dict?          → create it, save new ID for mapping
+```
+
+No other file needs to change. Just replace `auto_topic_creator.py` with this.
