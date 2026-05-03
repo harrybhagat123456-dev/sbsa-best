@@ -5,7 +5,7 @@ import json
 import time
 import shutil
 from vars import CREDIT, OWNER, AUTH_USERS
-from pyrogram import Client, filters
+from pyrogram import Client, filters, enums
 from pyrogram.errors import FloodWait, PeerIdInvalid, UserIsBlocked, InputUserDeactivated
 from pyrogram.errors.exceptions.bad_request_400 import StickerEmojiInvalid
 from pyrogram.types.messages_and_media import message
@@ -293,8 +293,8 @@ def register_commands_handlers(bot):
 
         MAX = 3800
         chunks = [text[i:i+MAX] for i in range(0, len(text), MAX)]
-        await message.reply_text(chunks[0], parse_mode="html", disable_web_page_preview=True)
+        await message.reply_text(chunks[0], parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True)
         for c in chunks[1:]:
-            await message.reply_text(c, parse_mode="html", disable_web_page_preview=True)
+            await message.reply_text(c, parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True)
 
 
