@@ -346,48 +346,56 @@ def cleanup_downloads():
 def sandbox_keep_alive():
     """
     Sandbox keep-alive loop.
-    Rotates through multiple endpoints every ~4 minutes with random jitter
-    so Replit always sees recent activity and never suspends the project.
+
+    Pings localhost:{PORT} every ~4 minutes (rotating endpoints, random jitter)
+    so the Flask server always stays warm inside the container.
+
+    For Replit free-tier to never sleep you ALSO need an external pinger
+    (UptimeRobot, cron-job.org, etc.) hitting your public URL every 5 minutes.
+    The public URL is printed at startup for easy copy-paste.
     """
-    if not PUBLIC_URL:
-        print("[SANDBOX] No public URL — keep-alive disabled.")
+    LOCAL_BASE = f"http://127.0.0.1:{PORT}"
+
+    if PUBLIC_URL:
+        print(f"[SANDBOX] Public URL  → {PUBLIC_URL}")
+        print(f"[SANDBOX] ⚠ Point UptimeRobot at: {PUBLIC_URL}/ping  (every 5 min)")
+        print(f"[SANDBOX] Status page → {PUBLIC_URL}/sandbox")
+    else:
+        print("[SANDBOX] No public URL detected — external pinger cannot be configured.")
         print("[SANDBOX] Set REPLIT_DEV_DOMAIN, RENDER_EXTERNAL_URL, or ALIVE_URL.")
-        return
 
-    print(f"[SANDBOX] Keep-alive started → {PUBLIC_URL}")
+    print(f"[SANDBOX] Internal keep-alive → {LOCAL_BASE}")
     print(f"[SANDBOX] Interval: every ~{_PING_INTERVAL//60} min ± {_PING_JITTER}s")
-    print(f"[SANDBOX] Endpoints: {_PING_ENDPOINTS}")
-    print(f"[SANDBOX] Open {PUBLIC_URL}/sandbox to monitor status.")
 
-    # Stagger first ping so server is fully up
-    time.sleep(20)
+    # Wait for Flask to fully bind before first ping
+    time.sleep(5)
 
     ep_cycle = 0
     while True:
         endpoint = _PING_ENDPOINTS[ep_cycle % len(_PING_ENDPOINTS)]
         ep_cycle += 1
-        url = PUBLIC_URL + endpoint
+        url = LOCAL_BASE + endpoint
         try:
-            resp = requests.get(url, timeout=15, headers={"User-Agent": "HARRY-Sandbox/1.0"})
-            _sandbox["total_pings"]        += 1
-            _sandbox["last_ping_time"]      = time.strftime("%Y-%m-%d %H:%M:%S")
-            _sandbox["last_ping_endpoint"]  = endpoint
-            _sandbox["last_ping_status"]    = f"HTTP {resp.status_code}"
+            resp = requests.get(url, timeout=10, headers={"User-Agent": "HARRY-Sandbox/1.0"})
+            _sandbox["total_pings"]       += 1
+            _sandbox["last_ping_time"]     = time.strftime("%Y-%m-%d %H:%M:%S")
+            _sandbox["last_ping_endpoint"] = endpoint
+            _sandbox["last_ping_status"]   = f"HTTP {resp.status_code}"
             print(f"[SANDBOX] ✓ {endpoint} → {resp.status_code}  (ping #{_sandbox['total_pings']})")
         except requests.exceptions.Timeout:
             _sandbox["errors"] += 1
             _sandbox["last_ping_status"] = "timeout"
             print(f"[SANDBOX] ✗ {endpoint} → timeout")
-        except requests.exceptions.ConnectionError:
+        except requests.exceptions.ConnectionError as _ce:
             _sandbox["errors"] += 1
             _sandbox["last_ping_status"] = "connection error"
-            print(f"[SANDBOX] ✗ {endpoint} → connection error")
+            print(f"[SANDBOX] ✗ {endpoint} → connection error ({_ce})")
         except Exception as e:
             _sandbox["errors"] += 1
             _sandbox["last_ping_status"] = str(e)[:60]
             print(f"[SANDBOX] ✗ {endpoint} → {e}")
 
-        # Sleep with jitter so activity looks natural
+        # Random jitter makes traffic look natural
         sleep_time = _PING_INTERVAL + random.randint(-_PING_JITTER, _PING_JITTER)
         time.sleep(max(60, sleep_time))
 
