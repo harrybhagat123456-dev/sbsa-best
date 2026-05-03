@@ -5,6 +5,7 @@ from pyrogram.types.messages_and_media import message
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, InputMediaPhoto
 # .....,.....,.......,...,.......,....., .....,.....,.......,...,.......,.....,
 import globals
+from modules import render_manager  # noqa — registers handlers automatically
 from logs import logging
 from html_handler import register_html_handlers
 from drm_handler import register_drm_handlers
