@@ -1638,18 +1638,18 @@ async def _drm_handler_impl(bot: Client, m: Message):
                 cw_keys_string = f"{cw_kid}:{cw_key}"  # Mark as CareerWill DRM
 
             if "youtu" in url:
-                ytf = f"bv*[height<={raw_text2}][ext=mp4]+ba[ext=m4a]/b[height<=?{raw_text2}]"
+                ytf = f"bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b"
             elif "embed" in url:
                 ytf = f"bestvideo[height<={raw_text2}]+bestaudio/best[height<={raw_text2}]"
             else:
                 ytf = f"b[height<={raw_text2}]/bv[height<={raw_text2}]+ba/b/bv+ba"
-           
+
             if "jw-prod" in url:
                 cmd = f'yt-dlp -o "{name}.mp4" "{url}"'
             elif "webvideos.classplusapp." in url:
                cmd = f'yt-dlp --add-header "referer:https://web.classplusapp.com/" --add-header "x-cdn-tag:empty" -f "{ytf}" "{url}" -o "{name}.mp4"'
             elif "youtube.com" in url or "youtu.be" in url:
-                cmd = f'yt-dlp --cookies youtube_cookies.txt -f "{ytf}" "{url}" -o "{name}".mp4'
+                cmd = f'yt-dlp -k --allow-unplayable-formats --geo-bypass --cookies youtube_cookies.txt -f "{ytf}" -S "res~{raw_text2},+size,+br" --fixup never --merge-output-format mp4 "{url}" -o "{name}".mp4'
             else:
                 cmd = f'yt-dlp -f "{ytf}" "{url}" -o "{name}.mp4"'
 
