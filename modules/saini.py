@@ -23,6 +23,7 @@ from pathlib import Path
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad
 from base64 import b64decode
+import yt_dlp
 
 last_download_error = ""
 
@@ -776,3 +777,169 @@ async def download_careerwill_drm(mpd_url, kid, key, output_path, output_name, q
 
     print(f"[CW_DRM] Done! {output_file} ({os.path.getsize(output_file)} bytes)")
     return output_file
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Custom YouTube Downloader (yt_dlp Python API, no subprocess)
+# Proper cookie handling, real error messages, multiple format fallbacks
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _resolve_cookies_path():
+    """Find the YouTube cookies file by checking common locations."""
+    _script_dir = os.path.dirname(os.path.abspath(__file__))
+    _candidates = [
+        os.path.join(_script_dir, "youtube_cookies.txt"),
+        os.path.join(_script_dir, "downloads", "www.youtube.com_cookies.txt"),
+        os.path.join(os.getcwd(), "youtube_cookies.txt"),
+        os.path.join(os.getcwd(), "modules", "youtube_cookies.txt"),
+    ]
+    # Also try env var
+    _env_cookie = os.environ.get("cookies_file_path", "")
+    if _env_cookie:
+        _candidates.insert(0, _env_cookie)
+        _candidates.insert(0, os.path.abspath(_env_cookie))
+
+    for c in _candidates:
+        if os.path.isfile(c):
+            print(f"[YT_COOKIES] Found cookies at: {c}")
+            return os.path.abspath(c)
+
+    print("[YT_COOKIES] WARNING: No cookies file found in any known location")
+    return None
+
+
+def _yt_dlp_extract(ydl_opts, url):
+    """Run yt_dlp.extract_info in a blocking call (for thread executor)."""
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        return info
+
+
+async def download_youtube_video(url, output_name, quality="720", cookies_path=None):
+    """
+    Custom YouTube downloader using yt_dlp Python API directly.
+    No subprocess — proper cookie handling, real error messages, multiple fallbacks.
+
+    Tries multiple format strategies and downloader combinations:
+    1. Separate video+audio within quality limit (with aria2c)
+    2. Separate video+audio without aria2c (native downloader)
+    3. Pre-merged best format
+    4. Ultimate 'best' fallback
+
+    Args:
+        url:          YouTube URL
+        output_name:  Output filename prefix (without extension)
+        quality:      Max height string (e.g. "720")
+        cookies_path: Optional explicit cookies file path
+
+    Returns:
+        Path to downloaded file (str), or raises Exception with real error message.
+    """
+    global last_download_error
+    last_download_error = ""
+
+    # ── Resolve cookies ────────────────────────────────────────────────────
+    if not cookies_path or not os.path.isfile(cookies_path):
+        cookies_path = _resolve_cookies_path()
+
+    # ── Quality handling ───────────────────────────────────────────────────
+    try:
+        q = int(quality)
+    except (ValueError, TypeError):
+        q = 720
+        print(f"[YT_DL] Invalid quality '{quality}', defaulting to 720")
+
+    # ── Format strategies to try (in order) ────────────────────────────────
+    format_strategies = [
+        f"bv*[height<={q}][ext=mp4]+ba[ext=m4a]/b[height<=?{q}]",
+        f"b[height<={q}]/bv[height<={q}]+ba/b/bv+ba",
+        "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "best",
+    ]
+
+    # ── Downloader strategies ──────────────────────────────────────────────
+    aria2c_args = '-x 16 -s 16 -j 16 --min-split-size=1M --disk-cache=256M --file-allocation=none --max-tries=10 --retry-wait=2'
+    downloader_strategies = [
+        {"external_downloader": "aria2c", "downloader_args": {"aria2c": aria2c_args}},
+        {},  # Native yt-dlp downloader (no external)
+    ]
+
+    last_err = ""
+    for fmt_idx, fmt in enumerate(format_strategies):
+        for dl_idx, dl_opts in enumerate(downloader_strategies):
+            try:
+                # Build yt-dlp options
+                ydl_opts = {
+                    'format': fmt,
+                    'outtmpl': f'{output_name}.%(ext)s',
+                    'quiet': False,
+                    'no_warnings': False,
+                    'retries': 10,
+                    'fragment_retries': 10,
+                    'concurrent_fragment_downloads': 8,
+                    'socket_timeout': 30,
+                    'http_chunk_size': 10485760,
+                    'noprogress': False,
+                    'no_part': True,
+                    'merge_output_format': 'mp4',
+                    'progress_hooks': [],  # Could add progress hook later
+                }
+                # Add downloader-specific options
+                ydl_opts.update(dl_opts)
+
+                # Add cookies if available
+                if cookies_path and os.path.isfile(cookies_path):
+                    ydl_opts['cookiefile'] = os.path.abspath(cookies_path)
+
+                dl_label = "aria2c" if 'external_downloader' in dl_opts else "native"
+                print(f"[YT_DL] Strategy {fmt_idx+1}.{dl_idx+1}: fmt='{fmt}' dl='{dl_label}'")
+                print(f"[YT_DL] URL: {url}")
+
+                # Run in thread executor (yt_dlp is blocking)
+                loop = asyncio.get_event_loop()
+                info = await loop.run_in_executor(None, _yt_dlp_extract, ydl_opts, url)
+
+                # Find the downloaded file
+                dl_file = _find_downloaded_media(output_name)
+                if dl_file and os.path.isfile(dl_file) and os.path.getsize(dl_file) > 0:
+                    size = os.path.getsize(dl_file)
+                    print(f"[YT_DL] SUCCESS: {dl_file} ({size} bytes)")
+                    return dl_file
+
+                # Download said success but no file found
+                last_err = "Download completed but output file not found on disk"
+                print(f"[YT_DL] Strategy returned no file, trying next...")
+
+            except yt_dlp.utils.DownloadError as e:
+                last_err = str(e)
+                _err_lower = last_err.lower()
+
+                # Skip aria2c entirely if the error is aria2c-specific
+                if 'aria2' in _err_lower or 'external downloader' in _err_lower:
+                    print(f"[YT_DL] aria2c error, skipping aria2c strategies: {last_err[:200]}")
+                    # Skip remaining aria2c attempts for this format
+                    if dl_idx == 0:
+                        continue  # Will try native on next iteration
+                    else:
+                        break  # Native also failed, try next format
+
+                print(f"[YT_DL] DownloadError: {last_err[:200]}")
+                # Try next strategy
+                continue
+
+            except yt_dlp.utils.ExtractorError as e:
+                last_err = f"Extractor error: {str(e)}"
+                print(f"[YT_DL] ExtractorError: {last_err[:200]}")
+                # This is a fundamental issue (video unavailable, private, etc.)
+                # No point trying other format strategies
+                break
+
+            except Exception as e:
+                last_err = f"{type(e).__name__}: {str(e)}"
+                print(f"[YT_DL] Error: {last_err[:200]}")
+                continue
+
+    # All strategies failed
+    last_download_error = f"yt-dlp failed: {last_err}"
+    print(f"[YT_DL] ALL STRATEGIES FAILED: {last_download_error}")
+    raise Exception(f"YouTube download failed: {last_err}")

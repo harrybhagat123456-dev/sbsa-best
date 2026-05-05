@@ -1767,6 +1767,52 @@ async def _drm_handler_impl(bot: Client, m: Message):
                     await asyncio.sleep(UPLOAD_DELAY)
                     continue
 
+                elif "youtube.com" in url or "youtu.be" in url:
+                    # ── YouTube custom downloader (yt_dlp Python API, no subprocess) ──
+                    remaining_links = len(links) - count
+                    progress = (count / len(links)) * 100
+                    Show1 = f"<blockquote>🚀𝐏𝐫𝐨𝐠𝐫𝐞𝐬𝐬 » {progress:.2f}%</blockquote>\n┃\n" \
+                           f"┣🔗𝐈𝐧𝐝ᴇx » {count}/{len(links)}\n┃\n" \
+                           f"╰━🖇️𝐑ᴇᴍᴀɪɴ » {remaining_links}\n" \
+                           f"━━━━━━━━━━━━━━━━━━━━━━━━\n" \
+                           f"<blockquote><b>⚡YouTube Downloading...⏳</b></blockquote>\n┃\n" \
+                           f'┣💃𝐂𝐫ᴇᴅɪᴛ » {CR}\n┃\n' \
+                           f"╰━📚𝐁ᴀᴛᴄʜ » {b_name}\n" \
+                           f"{_topic_part}" \
+                           f"━━━━━━━━━━━━━━━━━━━━━━━━━\n" \
+                           f"<blockquote>📚𝐓ɪᴛʟᴇ » {namef}</blockquote>\n┃\n" \
+                           f"┣🍁𝐐ᴜᴀʟɪᴛʏ » {quality}\n┃\n" \
+                           f'┣━🔗𝐋ɪɴᴋ » <a href="{link0}">**Original Link**</a>\n┃\n' \
+                           f'╰━━━━━━━━━━━━━━━━━━━━━━━━━\n' \
+                           f"🛑**Send** /stop **to stop process**\n┃\n" \
+                           f"╰━✦𝐁ᐨ𝐭 𝐌𝐚ᴅ𝐞 𝐁𝐲 ✦ {CREDIT}"
+                    Show = f"<i><b>🎬 YouTube Video Downloading</b></i>\n<blockquote><b>{str(count).zfill(3)}) {name1}</b></blockquote>"
+                    prog = await bot.send_message(channel_id, Show, disable_web_page_preview=True)
+                    prog1 = await m.reply_text(Show1, disable_web_page_preview=True)
+                    try:
+                        _yt_quality = raw_text2 if raw_text2 and raw_text2.isdigit() else "720"
+                        res_file = await helper.download_youtube_video(url, name, _yt_quality)
+                    except Exception as _yt_err:
+                        print(f"[YT_HANDLER] Error: {_yt_err}")
+                        res_file = None
+                    filename = res_file
+                    await prog1.delete(True)
+                    await prog.delete(True)
+                    if not filename or not os.path.isfile(filename):
+                        _dl_error = getattr(helper, "last_download_error", "") or str(_yt_err) if '_yt_err' in dir() else "YouTube download failed. Check if video is available, cookies are valid, or link is private/restricted."
+                        await bot.send_message(channel_id, f'⚠️**Downloading Failed**⚠️\n**Name** =>> `{str(count).zfill(3)} {name1}`\n**Url** =>> {url}\n\n<blockquote expandable><i><b>Failed Reason: {_dl_error}</b></i></blockquote>', disable_web_page_preview=True)
+                        failed_links.append(f"{name1} : {link0}")
+                        count += 1
+                        failed_count += 1
+                        continue
+                    _sent = await helper.send_vid(bot, m, cc, filename, vidwatermark, thumb, name, prog, channel_id, topic_id=_link_topic_id)
+                    if _sent:
+                        _chap = link_chapters[i] if i < len(link_chapters) else ""
+                        await _pin_heading(_chap, f'{str(count).zfill(3)} {name1}', _sent.id, topic_id=_link_topic_id)
+                    count += 1
+                    await asyncio.sleep(UPLOAD_DELAY)
+                    continue
+
                 else:
                     remaining_links = len(links) - count
                     progress = (count / len(links)) * 100
