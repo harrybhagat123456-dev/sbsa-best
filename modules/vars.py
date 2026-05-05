@@ -43,7 +43,7 @@ OWNER = int(owner_str)
 
 CREDIT = environ.get("CREDIT", "HARRY")
 
-cookies_file_path = os.getenv("cookies_file_path", "youtube_cookies.txt")
+cookies_file_path = os.getenv("cookies_file_path", os.path.join(os.path.dirname(os.path.abspath(__file__)), "youtube_cookies.txt"))
 
 TOTAL_USER = os.environ.get('TOTAL_USERS', str(OWNER)).split(',')
 TOTAL_USERS = [int(user_id) for user_id in TOTAL_USER]

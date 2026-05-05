@@ -61,7 +61,6 @@ _YTDLP_EXTRA = (
     '--progress '                  # always show progress
     '--newline '                   # one line per progress update (console-friendly)
     '--no-part '
-    '--js-runtimes node '
     '--remote-components ejs:github '
     '--external-downloader aria2c '
     f'--downloader-args "{_ARIA2C_ARGS}"'
@@ -323,6 +322,10 @@ def time_name():
 
 
 async def download_video(url, cmd, name):
+    _cookies = _resolve_cookies_path()
+    if _cookies and ("youtube.com" in url or "youtu.be" in url):
+        if "--cookies" not in cmd:
+            cmd = cmd.replace("yt-dlp ", f'yt-dlp --cookies "{_cookies}" ', 1)
     download_cmd = f'{cmd} {_YTDLP_EXTRA}'
     global failed_counter, last_download_error
     last_download_error = ""
