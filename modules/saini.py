@@ -318,8 +318,7 @@ async def download_video(url, cmd, name):
     download_cmd = f'{cmd} {_YTDLP_EXTRA}'
     global failed_counter, last_download_error
     last_download_error = ""
-    print(f"[DOWNLOAD] Starting: {download_cmd}")
-    logging.info(download_cmd)
+    logging.info(f"[DOWNLOAD] Starting: {download_cmd}")
     _proc = await asyncio.create_subprocess_shell(
         download_cmd,
         stdout=asyncio.subprocess.PIPE,
@@ -327,14 +326,19 @@ async def download_video(url, cmd, name):
     )
     stdout, stderr = await _proc.communicate()
     k = _proc
+    stdout_text = stdout.decode('utf-8', errors='replace')[-1000:] if stdout else ''
+    stderr_text = stderr.decode('utf-8', errors='replace')[-1000:] if stderr else ''
+    logging.info(f"[DOWNLOAD] Exit code: {k.returncode} for: {name}")
+    if stdout_text:
+        logging.info(f"[DOWNLOAD] stdout: {stdout_text}")
+    if stderr_text:
+        logging.error(f"[DOWNLOAD] stderr: {stderr_text}")
     if k.returncode != 0:
         last_download_error = f"yt-dlp exited with code {k.returncode}"
-        if stderr:
-            last_download_error += f"\n{stderr.decode('utf-8', errors='replace')[-500:]}"
-        print(f"[DOWNLOAD] Failed with code {k.returncode} for: {name}")
-        print(f"[DOWNLOAD] stderr: {stderr.decode('utf-8', errors='replace')[-500:]}")
+        if stderr_text:
+            last_download_error += f"\n{stderr_text}"
     else:
-        print(f"[DOWNLOAD] Done: {name}")
+        logging.info(f"[DOWNLOAD] Done: {name}")
     if "visionias" in cmd and k.returncode != 0 and failed_counter <= 10:
         failed_counter += 1
         await asyncio.sleep(5)
