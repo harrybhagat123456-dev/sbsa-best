@@ -314,6 +314,197 @@ def time_name():
     return f"{date} {current_time}.mp4"
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Robust YouTube Downloader — uses yt_dlp Python API with multi-strategy fallback
+# Handles: cookies, multiple player clients, quality selection, aria2c fallback
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _resolve_cookies_path():
+    """Find cookies file from known locations."""
+    candidates = [
+        os.path.join(os.path.dirname(__file__), "youtube_cookies.txt"),
+        os.path.join(os.path.dirname(__file__), "..", "youtube_cookies.txt"),
+        "youtube_cookies.txt",
+        "/app/modules/youtube_cookies.txt",
+    ]
+    for p in candidates:
+        abs_p = os.path.abspath(p)
+        if os.path.isfile(abs_p) and os.path.getsize(abs_p) > 0:
+            logging.info(f"[YT] Found cookies: {abs_p}")
+            return abs_p
+    logging.warning("[YT] No cookies file found")
+    return None
+
+
+def _yt_dlp_extract(ydl_opts):
+    """Extract info using yt_dlp in a thread (avoids blocking event loop)."""
+    import concurrent.futures
+    def _do_extract():
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            return ydl.extract_info(ydl_opts.get('_url'), download=False)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(_do_extract).result()
+
+
+def _yt_dlp_download(ydl_opts):
+    """Download using yt_dlp in a thread (avoids blocking event loop)."""
+    import concurrent.futures
+    def _do_download():
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            return ydl.download([ydl_opts.get('_url')])
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(_do_download).result()
+
+
+async def download_youtube_video(url, name, quality="720"):
+    """
+    Robust YouTube downloader with multi-strategy fallback.
+
+    Strategies tried in order:
+    1. Cookies + web client (best for login-required videos)
+    2. Cookies + ios client (fallback for age-restricted)
+    3. Cookies + tv_simply client (fallback)
+    4. No cookies + web client (works for public videos)
+    5. No cookies + tv_simply client
+
+    Each strategy tries multiple format selectors.
+
+    Returns: path to downloaded file or None on failure.
+    """
+    global last_download_error
+    last_download_error = ""
+
+    cookies_path = _resolve_cookies_path()
+    base_name = name if name else "youtube_video"
+    safe_name = re.sub(r'[<>:"/\\|?*]', '', base_name)[:200]
+
+    # Define quality-based format selectors
+    if quality == "best" or not quality:
+        format_strategies = [
+            "bestvideo+bestaudio/best",
+            "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+            "best",
+        ]
+    else:
+        q = int(quality)
+        format_strategies = [
+            f"bestvideo[height<={q}]+bestaudio/best[height<={q}]",
+            f"best[height<={q}]/bestvideo+bestaudio/best",
+            "bestvideo+bestaudio/best",
+            "best",
+        ]
+
+    # Define client strategies: (player_client, use_cookies, label)
+    client_strategies = [
+        ("web", True, "web+cookies"),
+        ("ios", True, "ios+cookies"),
+        ("tv_simply", True, "tv+cookies"),
+        ("web", False, "web (no cookies)"),
+        ("tv_simply", False, "tv (no cookies)"),
+    ]
+
+    for client, use_cookies, label in client_strategies:
+        # Skip cookie strategies if no cookies file
+        if use_cookies and not cookies_path:
+            logging.info(f"[YT] Skipping {label} — no cookies file")
+            continue
+
+        for fmt in format_strategies:
+            ydl_opts = {
+                '_url': url,
+                'format': fmt,
+                'outtmpl': f'{safe_name}.%(ext)s',
+                'merge_output_format': 'mp4',
+                'quiet': True,
+                'no_warnings': False,
+                'skip_download': True,  # Extract only first
+                'extractor_args': {'youtube': {'player_client': [client]}},
+            }
+
+            if use_cookies and cookies_path:
+                ydl_opts['cookiefile'] = cookies_path
+
+            # Try extract
+            try:
+                logging.info(f"[YT] Trying {label} | format: {fmt}")
+                info = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: _yt_dlp_extract(ydl_opts)
+                )
+
+                if not info or 'formats' not in info or len(info.get('formats', [])) == 0:
+                    logging.warning(f"[YT] {label}: No formats found")
+                    continue
+
+                # Got formats! Now download
+                title = info.get('title', safe_name)[:80]
+                n_formats = len(info['formats'])
+                logging.info(f"[YT] {label}: Found {n_formats} formats — '{title}'")
+
+                # Switch to download mode
+                ydl_opts['skip_download'] = False
+                ydl_opts['noprogress'] = False
+                ydl_opts['progress_hooks'] = [_make_progress_hook()]
+
+                await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: _yt_dlp_download(ydl_opts)
+                )
+
+                # Find downloaded file
+                result = _find_downloaded_media(safe_name)
+                if result:
+                    logging.info(f"[YT] Download OK: {result}")
+                    return result
+                else:
+                    last_download_error = f"{label}: Download seemed OK but file not found"
+                    logging.error(f"[YT] File not found after download for: {safe_name}")
+
+            except yt_dlp.utils.DownloadError as e:
+                err_str = str(e)
+                # If "Sign in to confirm" — cookies are dead, skip remaining cookie strategies
+                if "Sign in to confirm" in err_str:
+                    logging.warning(f"[YT] {label}: Login required — cookies may be expired")
+                    if use_cookies:
+                        last_download_error = f"YouTube requires sign-in. Your cookies may be expired. Please use /ytcookies to upload fresh cookies exported from your browser (while logged into YouTube)."
+                        break  # Skip remaining formats for this client, try next client
+                    continue
+                elif "not available" in err_str:
+                    logging.warning(f"[YT] {label}: Format not available — trying next format")
+                    continue
+                else:
+                    last_download_error = f"[{label}] {err_str[:300]}"
+                    logging.error(f"[YT] {label} failed: {err_str[:200]}")
+                    continue
+
+            except Exception as e:
+                last_download_error = f"[{label}] {str(e)[:300]}"
+                logging.error(f"[YT] {label} error: {str(e)[:200]}")
+                continue
+
+    # All strategies failed
+    if not last_download_error:
+        last_download_error = "All download strategies failed. The video may be private, age-restricted, or cookies are expired."
+    logging.error(f"[YT] ALL strategies failed for {url}: {last_download_error}")
+    return None
+
+
+def _make_progress_hook():
+    """Return a progress hook for yt-dlp."""
+    def hook(d):
+        if d['status'] == 'downloading':
+            _total = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
+            _downloaded = d.get('downloaded_bytes', 0)
+            if _total > 0:
+                pct = (_downloaded / _total) * 100
+                speed = d.get('speed', 0)
+                speed_str = f"{speed/1024/1024:.1f}MB/s" if speed else "?"
+                logging.info(f"[YT] Progress: {pct:.1f}% ({speed_str})")
+        elif d['status'] == 'finished':
+            logging.info(f"[YT] Download finished: {d.get('filename', '?')}")
+        elif d['status'] == 'error':
+            logging.error(f"[YT] Download error: {d.get('error', '?')}")
+    return hook
+
+
 async def download_video(url, cmd, name):
     download_cmd = f'{cmd} {_YTDLP_EXTRA}'
     global failed_counter, last_download_error

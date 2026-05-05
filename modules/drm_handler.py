@@ -2077,7 +2077,11 @@ async def _drm_handler_impl(bot: Client, m: Message):
                     Show = f"<i><b>Video Downloading</b></i>\n<blockquote><b>{str(count).zfill(3)}) {name1}</b></blockquote>"
                     prog = await bot.send_message(channel_id, Show, disable_web_page_preview=True)
                     prog1 = await m.reply_text(Show1, disable_web_page_preview=True)
-                    res_file = await helper.download_video(url, cmd, name)
+                    # ── YouTube: use robust Python API with multi-strategy fallback ──
+                    if "youtube.com" in url or "youtu.be" in url:
+                        res_file = await helper.download_youtube_video(url, name, quality=raw_text2)
+                    else:
+                        res_file = await helper.download_video(url, cmd, name)
                     filename = res_file
                     await prog1.delete(True)
                     await prog.delete(True)
