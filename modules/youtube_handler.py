@@ -715,6 +715,48 @@ async def setproxy_handler(client: Client, m: Message):
     )
 
 
+async def proxytest_handler(client: Client, m: Message):
+    """Manually test and display the proxy pool status."""
+    msg = await m.reply_text("🔄 **Testing proxy pool...**\nThis may take up to 90 seconds.")
+    try:
+        from saini import refresh_proxy_pool, _PROXY_POOL, _PROXY_POOL_TIME
+        import time as _time
+
+        # Force refresh
+        _PROXY_POOL.clear()
+        refresh_proxy_pool()
+
+        pool = list(_PROXY_POOL)
+        age = int(_time.time() - _PROXY_POOL_TIME) if _PROXY_POOL_TIME else 0
+
+        if pool:
+            text = (
+                f"✅ **Proxy Pool Status**\n\n"
+                f"**Pool size:** {len(pool)} proxies\n"
+                f"**Age:** {age}s ago\n\n"
+            )
+            for i, p in enumerate(pool, 1):
+                text += f"{i}. `{p}`\n"
+            text += (
+                f"\n<blockquote>Pool auto-refreshes every 20 minutes. "
+                f"Failed proxies are removed immediately. "
+                f"Use /setproxy to override with your own proxy.</blockquote>"
+            )
+        else:
+            text = (
+                "❌ **No working proxies found**\n\n"
+                "<blockquote>No free proxy could pass yt-dlp validation. "
+                "This is normal — free proxies are unreliable. "
+                "The bot will still try direct connection first (Phase 1), "
+                "then proxy pool (Phase 2). "
+                "For reliable downloads, set your own residential proxy via /setproxy.</blockquote>"
+            )
+
+        await msg.edit(text)
+    except Exception as e:
+        await msg.edit(f"❌ **Proxy test failed:** {str(e)[:200]}")
+
+
 def register_youtube_handlers(bot):
     bot.on_message(filters.command("getcookies") & filters.private)(getcookies_handler)
     bot.on_message(filters.command(["ytcookies", "ytcookie"]) & filters.private)(ytcookies_handler)
@@ -726,5 +768,6 @@ def register_youtube_handlers(bot):
     bot.on_message(filters.command(["allhistory"]))(allhistory_handler)
     bot.on_message(filters.command(["resetallhistory"]))(resetallhistory_handler)
     bot.on_message(filters.command(["setproxy"]))(setproxy_handler)
+    bot.on_message(filters.command(["proxytest"]))(proxytest_handler)
     bot.on_callback_query(filters.regex(r"^clear_my_history$"))(clear_history_callback)
-    print("[YouTube Handler] Handlers registered. /ytm=simple YT, /yth=YT+resume, /viewhistory=list, /clearhistory, /setproxy=proxy")
+    print("[YouTube Handler] Handlers registered. /ytm=simple YT, /yth=YT+resume, /viewhistory=list, /clearhistory, /setproxy=proxy, /proxytest=test pool")

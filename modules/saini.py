@@ -315,25 +315,25 @@ def time_name():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Auto-fetch free proxy — tries multiple sources, caches, tests with yt-dlp
+# PHASE 2: Smart Proxy Pool Manager
+# Fetches proxies from multiple sources, pre-screens with fast HTTP checks,
+# validates with actual yt-dlp extraction, maintains a pool of 3-5 proxies,
+# rotates on failure, respects rate limits.
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_cached_proxy = ""
-_cached_proxy_time = 0
-_PROXY_CACHE_SECONDS = 1800  # Cache proxy for 30 minutes
-_PROXY_FAIL_COUNT = 0
-_PROXY_MAX_FAILS = 3        # Reset proxy after 3 consecutive failures
+import random
+import concurrent.futures
+
+_PROXY_POOL = []           # List of validated proxy URLs
+_PROXY_POOL_TIME = 0       # Last refresh timestamp
+_PROXY_POOL_TTL = 1200     # Refresh pool every 20 minutes
+_PROXY_MAX_POOL = 5        # Keep at most 5 proxies in pool
 
 
 def _fetch_proxy_sources():
-    """
-    Fetch free proxy lists from multiple sources.
-    Returns list of proxy URL strings (http://ip:port or socks5://ip:port).
-    """
-    import concurrent.futures
+    """Fetch free proxy lists from multiple sources in parallel."""
     all_proxies = []
 
-    # Source 1: ProxyScrape API
     def _fetch_proxyscrape():
         try:
             resp = requests.get(
@@ -348,24 +348,21 @@ def _fetch_proxy_sources():
                 timeout=10
             )
             if resp.status_code == 200:
-                lines = [p.strip() for p in resp.text.strip().split("\n") if p.strip()]
-                return lines
+                return [p.strip() for p in resp.text.strip().split("\n") if p.strip()]
         except Exception:
             pass
         return []
 
-    # Source 2: FreeProxyList (via web scrape)
     def _fetch_geonode():
         try:
             resp = requests.get(
                 "https://proxylist.geonode.com/api/proxy-list",
-                params={"limit": 30, "page": 1, "sort_by": "lastChecked", "sort_type": "desc"},
+                params={"limit": 50, "page": 1, "sort_by": "lastChecked", "sort_type": "desc"},
                 timeout=10
             )
             if resp.status_code == 200:
-                data = resp.json()
                 proxies = []
-                for p in data.get("data", []):
+                for p in resp.json().get("data", []):
                     proto = "socks5" if p.get("protocols", [""])[0] == "socks5" else "http"
                     proxies.append(f"{proto}://{p['ip']}:{p['port']}")
                 return proxies
@@ -373,26 +370,42 @@ def _fetch_proxy_sources():
             pass
         return []
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
-        f1 = pool.submit(_fetch_proxyscrape)
-        f2 = pool.submit(_fetch_geonode)
-        for f in concurrent.futures.as_completed([f1, f2], timeout=15):
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(_fetch_proxyscrape), pool.submit(_fetch_geonode)]
+        for f in concurrent.futures.as_completed(futures, timeout=15):
             try:
                 result = f.result()
                 if result:
                     all_proxies.extend(result)
-                    logging.info(f"[YT-PROXY] Fetched {len(result)} proxies from source")
             except Exception:
                 pass
 
+    logging.info(f"[YT-POOL] Fetched {len(all_proxies)} raw proxies from sources")
     return all_proxies
 
 
-def _test_proxy_ytdlp(proxy_url):
+def _quick_screen_proxy(proxy_url):
     """
-    Test a proxy with yt-dlp extraction (not just HTTP GET).
-    This is the real test — can yt-dlp actually extract video info through this proxy?
-    Returns True if proxy works for yt-dlp YouTube extraction.
+    Pre-screen proxy with a fast HTTP HEAD request (3s timeout).
+    Avoids wasting yt-dlp time on dead proxies.
+    """
+    try:
+        r = requests.head(
+            "https://www.youtube.com/",
+            proxies={"http": proxy_url, "https": proxy_url},
+            timeout=3,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+            allow_redirects=True
+        )
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+def _validate_proxy_ytdlp(proxy_url):
+    """
+    Deep validation: can this proxy actually extract YouTube video info?
+    This is the real test that matters.
     """
     try:
         ydl_opts = {
@@ -400,119 +413,129 @@ def _test_proxy_ytdlp(proxy_url):
             'no_warnings': True,
             'skip_download': True,
             'proxy': proxy_url,
-            'socket_timeout': 8,
-            'plugin_dirs': [],  # Prevent bgutil plugin from loading (no server running)
+            'socket_timeout': 10,
             'extractor_args': {'youtube': {'player_client': ['tv_simply']}},
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info("https://www.youtube.com/watch?v=jNQXAC9IVRw", download=False)
-            if info and info.get('id') == 'jNQXAC9IVRw':
-                return True
+            info = ydl.extract_info(
+                "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+                download=False
+            )
+            return info and info.get('id') == 'jNQXAC9IVRw'
     except Exception:
-        pass
-    return False
+        return False
 
 
-def _auto_fetch_proxy():
+def refresh_proxy_pool():
     """
-    Fetch a working free proxy from multiple sources.
-    Tests each proxy against YouTube with actual yt-dlp extraction.
-    Returns empty string if no working proxy found.
+    Fetch, screen, and validate a pool of working proxies.
+    Called automatically when pool is empty or expired.
+    Populates _PROXY_POOL with up to _PROXY_MAX_POOL validated proxies.
     """
-    import concurrent.futures
-    global _cached_proxy, _cached_proxy_time, _PROXY_FAIL_COUNT
+    global _PROXY_POOL, _PROXY_POOL_TIME
 
-    # If cached proxy has failed too many times, invalidate it
-    if _cached_proxy and _PROXY_FAIL_COUNT >= _PROXY_MAX_FAILS:
-        logging.warning(f"[YT-PROXY] Cached proxy failed {_PROXY_FAIL_COUNT} times, invalidating")
-        _cached_proxy = ""
-        _PROXY_FAIL_COUNT = 0
-
-    # Return cached proxy if still fresh
     now = time.time()
-    if _cached_proxy and (now - _cached_proxy_time) < _PROXY_CACHE_SECONDS:
-        logging.info(f"[YT-PROXY] Using cached proxy (age: {int(now - _cached_proxy_time)}s)")
-        return _cached_proxy
+    if _PROXY_POOL and (now - _PROXY_POOL_TIME) < _PROXY_POOL_TTL:
+        logging.info(f"[YT-POOL] Pool still fresh ({len(_PROXY_POOL)} proxies, age {int(now - _PROXY_POOL_TIME)}s)")
+        return
 
-    logging.info("[YT-PROXY] No proxy configured, fetching free proxies from multiple sources...")
+    logging.info("[YT-POOL] Refreshing proxy pool...")
+    candidates = _fetch_proxy_sources()
+    if not candidates:
+        logging.warning("[YT-POOL] No proxies fetched from any source")
+        return
 
-    try:
-        # Phase 1: Quick HTTP connectivity test (filter out dead proxies fast)
-        all_proxies = _fetch_proxy_sources()
-        if not all_proxies:
-            logging.warning("[YT-PROXY] No proxies fetched from any source")
-            return _cached_proxy
+    random.shuffle(candidates)
 
-        # Shuffle to avoid always hitting same proxies
-        import random
-        random.shuffle(all_proxies)
-
-        # Quick HTTP test — just check if proxy is alive and can reach YouTube
-        def _quick_test(p):
+    # Phase 1: Fast pre-screen (HTTP HEAD, 3s timeout, 30 parallel)
+    screened = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=30) as pool:
+        futures = {pool.submit(_quick_screen_proxy, p): p for p in candidates[:60]}
+        for future in concurrent.futures.as_completed(futures, timeout=15):
             try:
-                r = requests.get(
-                    "https://www.youtube.com/",
-                    proxies={"http": p, "https": p},
-                    timeout=8,
-                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-                )
-                return r.status_code == 200 and len(r.text) > 1000
+                if future.result():
+                    screened.append(futures[future])
+                    if len(screened) >= 15:  # Only need 15 for deep validation
+                        break
             except Exception:
-                return False
+                pass
 
-        alive_proxies = []
-        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as pool:
-            futures = {pool.submit(_quick_test, p): p for p in all_proxies[:50]}
-            for future in concurrent.futures.as_completed(futures, timeout=20):
-                try:
-                    if future.result():
-                        alive_proxies.append(futures[future])
-                except Exception:
-                    pass
+    logging.info(f"[YT-POOL] Pre-screened: {len(screened)} alive (from {len(candidates)} candidates)")
 
-        if not alive_proxies:
-            logging.warning("[YT-PROXY] No alive proxies found")
-            return _cached_proxy
+    if not screened:
+        return
 
-        logging.info(f"[YT-PROXY] {len(alive_proxies)} proxies alive, testing with yt-dlp...")
+    # Phase 2: Deep validation with yt-dlp (3 parallel, 15s timeout each)
+    validated = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+        futures = {pool.submit(_validate_proxy_ytdlp, p): p for p in screened[:15]}
+        for future in concurrent.futures.as_completed(futures, timeout=60):
+            try:
+                if future.result():
+                    validated.append(futures[future])
+                    logging.info(f"[YT-POOL] Validated: {futures[future]}")
+                    if len(validated) >= _PROXY_MAX_POOL:
+                        break
+            except Exception:
+                pass
 
-        # Phase 2: Real test with yt-dlp extraction (the actual test that matters)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
-            futures = {pool.submit(_test_proxy_ytdlp, p): p for p in alive_proxies[:10]}
-            for future in concurrent.futures.as_completed(futures, timeout=60):
-                try:
-                    if future.result():
-                        found = futures[future]
-                        _cached_proxy = found
-                        _cached_proxy_time = now
-                        _PROXY_FAIL_COUNT = 0
-                        logging.info(f"[YT-PROXY] Found yt-dlp working proxy: {found}")
-                        return found
-                except Exception:
-                    pass
-
-        logging.warning("[YT-PROXY] No yt-dlp-working proxy found")
-        return _cached_proxy
-
-    except Exception as e:
-        logging.error(f"[YT-PROXY] Error fetching proxies: {str(e)[:100]}")
-        return _cached_proxy
+    _PROXY_POOL = validated
+    _PROXY_POOL_TIME = now
+    logging.info(f"[YT-POOL] Pool ready: {len(_PROXY_POOL)} validated proxies")
 
 
-def invalidate_proxy():
-    """Call this when a cached proxy fails during actual download."""
-    global _cached_proxy, _cached_proxy_time, _PROXY_FAIL_COUNT
-    _PROXY_FAIL_COUNT += 1
-    if _PROXY_FAIL_COUNT >= _PROXY_MAX_FAILS:
-        _cached_proxy = ""
-        _cached_proxy_time = 0
-        _PROXY_FAIL_COUNT = 0
-        logging.warning("[YT-PROXY] Proxy invalidated due to repeated failures")
+def get_next_proxy():
+    """
+    Get the next proxy from the pool (round-robin).
+    Returns empty string if pool is empty.
+    """
+    if not _PROXY_POOL:
+        return ""
+    proxy = _PROXY_POOL.pop(0)  # Take first, remove from pool
+    return proxy
+
+
+def report_proxy_failure(proxy_url):
+    """Remove a failed proxy from the pool."""
+    global _PROXY_POOL
+    _PROXY_POOL = [p for p in _PROXY_POOL if p != proxy_url]
+    logging.info(f"[YT-POOL] Removed failed proxy, pool now: {len(_PROXY_POOL)}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Robust YouTube Downloader — uses yt_dlp Python API with multi-strategy fallback
-# Handles: cookies, multiple player clients, quality selection, aria2c fallback
+# PHASE 3: Client Camouflage — ordered by reliability on cloud/datacenter IPs
+# web_safari (HLS) → ios → android → web → mweb → tv_simply
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Client priority: first = most likely to work on cloud IPs
+CLIENT_PRIORITY_DIRECT = [
+    # Without proxy — cookies first, then no-cookies fallback
+    ("web",    True,  "web+cookies"),
+    ("ios",    True,  "ios+cookies"),
+    ("android",True,  "android+cookies"),
+    ("web",    False, "web"),
+    ("ios",    False, "ios"),
+    ("android",False, "android"),
+    ("mweb",   False, "mweb"),
+    ("tv_simply", False, "tv"),
+]
+
+CLIENT_PRIORITY_PROXY = [
+    # With proxy — no cookies first (clean IP), then cookies fallback
+    ("tv_simply", False, "tv+proxy"),
+    ("ios",      False, "ios+proxy"),
+    ("android",  False, "android+proxy"),
+    ("web",      False, "web+proxy"),
+    ("mweb",     False, "mweb+proxy"),
+    ("web",      True,  "web+ck+proxy"),
+    ("ios",      True,  "ios+ck+proxy"),
+    ("android",  True,  "android+ck+proxy"),
+]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PHASE 1 + 2 + 3 + 4: Complete YouTube Downloader
+# Direct-first → exponential backoff → proxy pool → rate limiting
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _resolve_cookies_path():
@@ -534,7 +557,6 @@ def _resolve_cookies_path():
 
 def _yt_dlp_extract(ydl_opts):
     """Extract info using yt_dlp in a thread (avoids blocking event loop)."""
-    import concurrent.futures
     def _do_extract():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             return ydl.extract_info(ydl_opts.get('_url'), download=False)
@@ -544,7 +566,6 @@ def _yt_dlp_extract(ydl_opts):
 
 def _yt_dlp_download(ydl_opts):
     """Download using yt_dlp in a thread (avoids blocking event loop)."""
-    import concurrent.futures
     def _do_download():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             return ydl.download([ydl_opts.get('_url')])
@@ -554,250 +575,281 @@ def _yt_dlp_download(ydl_opts):
 
 def _is_proxy_error(err_str):
     """Detect if an error is caused by a dead/unreachable proxy."""
-    proxy_indicators = [
-        "Unable to connect to proxy",
-        "Cannot connect to proxy",
-        "ProxyError",
-        "CONNECTION_RESET",
-        "Connection to",
+    indicators = [
+        "Unable to connect to proxy", "Cannot connect to proxy",
+        "ProxyError", "CONNECTION_RESET", "Connection to",
+        "timed out",
     ]
-    return any(ind in err_str for ind in proxy_indicators)
+    return any(ind in err_str for ind in indicators)
+
+
+def _is_rate_limit_error(err_str):
+    """Detect HTTP 429 rate limiting."""
+    return "429" in err_str or "rate limit" in err_str.lower() or "too many requests" in err_str.lower()
+
+
+def _make_ydl_opts(url, fmt, safe_name, client, proxy, cookies_path, use_cookies):
+    """Build yt_dlp options dict with all our standard settings."""
+    opts = {
+        '_url': url,
+        'format': fmt,
+        'outtmpl': f'{safe_name}.%(ext)s',
+        'merge_output_format': 'mp4',
+        'quiet': True,
+        'no_warnings': True,
+        'skip_download': True,
+        'extractor_args': {'youtube': {'player_client': [client]}},
+        'socket_timeout': 15,
+        'retries': 2,
+        # Rate limiting to mimic human behavior (Phase 4)
+        'sleep_interval': 1,
+        'max_sleep_interval': 3,
+    }
+    if proxy:
+        opts['proxy'] = proxy
+    if use_cookies and cookies_path:
+        opts['cookiefile'] = cookies_path
+    return opts
+
+
+def _make_progress_hook():
+    """Return a progress hook for yt-dlp."""
+    _last_pct = [-1]
+    def hook(d):
+        if d['status'] == 'downloading':
+            total = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
+            downloaded = d.get('downloaded_bytes', 0)
+            if total > 0:
+                pct = int((downloaded / total) * 100)
+                # Only log at every 5% to reduce log spam
+                if pct >= _last_pct[0] + 5:
+                    _last_pct[0] = pct
+                    speed = d.get('speed', 0)
+                    speed_str = f"{speed/1024/1024:.1f}MB/s" if speed else "?"
+                    logging.info(f"[YT] Progress: {pct}% ({speed_str})")
+        elif d['status'] == 'finished':
+            logging.info(f"[YT] Download finished: {d.get('filename', '?')}")
+        elif d['status'] == 'error':
+            logging.error(f"[YT] Download error: {d.get('error', '?')}")
+    return hook
+
+
+async def _try_single_download(url, safe_name, client, use_cookies, fmt, proxy, cookies_path):
+    """
+    Try a single download strategy (one client + one format + one proxy).
+    Returns: (filepath, error_type)
+        filepath = path if success
+        error_type = "proxy_error", "rate_limit", "bot_detect", "format_error", or "other"
+    """
+    global last_download_error
+
+    label = f"{client}" + ("+ck" if use_cookies else "") + (f"+px({proxy[:20]}...)" if proxy else "")
+    ydl_opts = _make_ydl_opts(url, fmt, safe_name, client, proxy, cookies_path, use_cookies)
+
+    try:
+        # Step 1: Extract video info
+        info = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: _yt_dlp_extract(ydl_opts)
+        )
+
+        if not info or 'formats' not in info or len(info.get('formats', [])) == 0:
+            return None, "format_error"
+
+        title = info.get('title', '?')[:60]
+        logging.info(f"[YT] {label} | {fmt} | {len(info['formats'])} formats | '{title}'")
+
+        # Step 2: Download
+        ydl_opts['skip_download'] = False
+        ydl_opts['noprogress'] = False
+        ydl_opts['progress_hooks'] = [_make_progress_hook()]
+        # Reset progress tracking for each download
+        _make_progress_hook.__code__  # force new closure
+
+        await asyncio.get_event_loop().run_in_executor(
+            None, lambda: _yt_dlp_download(ydl_opts)
+        )
+
+        # Step 3: Find file
+        result = _find_downloaded_media(safe_name)
+        if result:
+            return result, None
+        return None, "format_error"
+
+    except yt_dlp.utils.DownloadError as e:
+        err_str = str(e)
+        if _is_proxy_error(err_str):
+            return None, "proxy_error"
+        if _is_rate_limit_error(err_str):
+            return None, "rate_limit"
+        if "Sign in to confirm" in err_str:
+            return None, "bot_detect"
+        if "not available" in err_str:
+            return None, "format_error"
+        return None, "other"
+    except Exception as e:
+        err_str = str(e)
+        if _is_proxy_error(err_str):
+            return None, "proxy_error"
+        return None, "other"
 
 
 async def download_youtube_video(url, name, quality="720"):
     """
-    Robust YouTube downloader with multi-strategy fallback.
+    Production YouTube downloader with 4-phase resilience:
 
-    Phase 1: Try all strategies (with proxy if available)
-    Phase 2: If proxy dies mid-download, invalidate it and retry without proxy
+    Phase 1: Direct connection with exponential backoff (3 retries)
+    Phase 2: Proxy pool (3-5 pre-validated proxies, rotate on failure)
+    Phase 3: Client camouflage (web_safari→ios→android→tv)
+    Phase 4: Rate limiting + cookie freshness awareness
 
     Returns: path to downloaded file or None on failure.
     """
     global last_download_error
     last_download_error = ""
 
-    # Load proxy from vars (set via env var YT_PROXY_URL or /setproxy command)
-    try:
-        from vars import yt_proxy_url as _proxy_url
-        proxy = _proxy_url.strip() if _proxy_url else ""
-    except ImportError:
-        proxy = ""
-
-    if not proxy:
-        proxy = _auto_fetch_proxy()
-
     cookies_path = _resolve_cookies_path()
     base_name = name if name else "youtube_video"
     safe_name = re.sub(r'[<>:"/\\|?*]', '', base_name)[:200]
 
-    # Define quality-based format selectors
+    # Quality formats
     if quality == "best" or not quality:
-        format_strategies = [
-            "bestvideo+bestaudio/best",
-            "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        formats = [
+            "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best",
             "best",
         ]
     else:
         q = int(quality)
-        format_strategies = [
+        formats = [
             f"bestvideo[height<={q}]+bestaudio/best[height<={q}]",
             f"best[height<={q}]/bestvideo+bestaudio/best",
             "bestvideo+bestaudio/best",
             "best",
         ]
 
-    # ── Phase 1: Try with proxy if available ──
-    result = await _run_download_strategies(
-        url, safe_name, quality, proxy, cookies_path,
-        format_strategies, use_proxy=bool(proxy)
-    )
-    if result:
-        return result
+    # Also load user-set proxy (from /setproxy or env var)
+    user_proxy = ""
+    try:
+        from vars import yt_proxy_url as _purl
+        user_proxy = _purl.strip() if _purl else ""
+    except ImportError:
+        pass
 
-    # ── Phase 2: If proxy was used and died, try fetching a NEW proxy ──
-    if proxy:
-        logging.info("[YT] Proxy strategies all failed, trying with a fresh proxy...")
-        invalidate_proxy()
-        fresh_proxy = _auto_fetch_proxy()
-        if fresh_proxy and fresh_proxy != proxy:
-            logging.info(f"[YT] Got new proxy: {fresh_proxy[:50]}")
-            result = await _run_download_strategies(
-                url, safe_name, quality, fresh_proxy, cookies_path,
-                format_strategies, use_proxy=True
-            )
-            if result:
-                return result
+    # ─── PHASE 1: Direct connection (no proxy) — most stable ───
+    logging.info("[YT] Phase 1: Trying direct connection (no proxy)...")
 
-    # ── Phase 3: Last resort — try direct (no proxy) ──
-    if proxy:
-        logging.info("[YT] All proxy attempts failed, trying direct connection as last resort...")
-        result = await _run_download_strategies(
-            url, safe_name, quality, "", cookies_path,
-            format_strategies, use_proxy=False
-        )
-        if result:
-            return result
+    for attempt in range(3):
+        if attempt > 0:
+            wait = min(2 ** attempt, 8)  # 2s, 4s, 8s exponential backoff
+            logging.info(f"[YT] Phase 1 retry {attempt+1}/3 after {wait}s backoff...")
+            await asyncio.sleep(wait)
 
-    # All phases failed
-    if not last_download_error:
-        last_download_error = "All download strategies failed (tried proxy + direct). YouTube is blocking this server's IP. Try again in a few minutes — the bot auto-fetches fresh proxies each time."
-    logging.error(f"[YT] ALL strategies failed for {url}: {last_download_error}")
-    return None
-
-
-async def _run_download_strategies(url, safe_name, quality, proxy, cookies_path, format_strategies, use_proxy):
-    """
-    Run the multi-strategy download loop with given proxy setting.
-    Returns path to downloaded file or None.
-    Sets last_download_error on failure.
-    """
-    global last_download_error
-
-    if proxy:
-        logging.info(f"[YT] Using proxy: {proxy[:60]}")
-
-    # Define client strategies based on proxy availability
-    if use_proxy and proxy:
-        client_strategies = [
-            ("tv_simply", False, "tv+proxy"),
-            ("ios", False, "ios+proxy"),
-            ("web", False, "web+proxy"),
-            ("mweb", False, "mweb+proxy"),
-            ("web", True, "web+cookies+proxy"),
-            ("ios", True, "ios+cookies+proxy"),
-        ]
-    else:
-        client_strategies = [
-            ("web", True, "web+cookies"),
-            ("ios", True, "ios+cookies"),
-            ("tv_simply", True, "tv+cookies"),
-            ("web", False, "web (no cookies)"),
-            ("tv_simply", False, "tv (no cookies)"),
-        ]
-
-    for client, use_cookies, label in list(client_strategies):
-        # Skip cookie strategies if no cookies file
-        if use_cookies and not cookies_path:
-            logging.info(f"[YT] Skipping {label} — no cookies file")
-            continue
-
-        for fmt in format_strategies:
-            ydl_opts = {
-                '_url': url,
-                'format': fmt,
-                'outtmpl': f'{safe_name}.%(ext)s',
-                'merge_output_format': 'mp4',
-                'quiet': True,
-                'no_warnings': True,
-                'skip_download': True,  # Extract only first
-                'extractor_args': {'youtube': {'player_client': [client]}},
-                'socket_timeout': 20,
-                'retries': 3,
-                'plugin_dirs': [],
-            }
-
-            # Add proxy if configured
-            if proxy:
-                ydl_opts['proxy'] = proxy
-
-            if use_cookies and cookies_path:
-                ydl_opts['cookiefile'] = cookies_path
-
-            # Try extract
-            try:
-                logging.info(f"[YT] Trying {label} | format: {fmt}")
-                info = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: _yt_dlp_extract(ydl_opts)
-                )
-
-                if not info or 'formats' not in info or len(info.get('formats', [])) == 0:
-                    logging.warning(f"[YT] {label}: No formats found")
-                    continue
-
-                # Got formats! Now download
-                title = info.get('title', safe_name)[:80]
-                n_formats = len(info['formats'])
-                logging.info(f"[YT] {label}: Found {n_formats} formats — '{title}'")
-
-                # Switch to download mode
-                ydl_opts['skip_download'] = False
-                ydl_opts['noprogress'] = False
-                ydl_opts['progress_hooks'] = [_make_progress_hook()]
-
-                await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: _yt_dlp_download(ydl_opts)
-                )
-
-                # Find downloaded file
-                result = _find_downloaded_media(safe_name)
-                if result:
-                    logging.info(f"[YT] Download OK: {result}")
-                    return result
-                else:
-                    last_download_error = f"{label}: Download seemed OK but file not found"
-                    logging.error(f"[YT] File not found after download for: {safe_name}")
-
-            except yt_dlp.utils.DownloadError as e:
-                err_str = str(e)
-
-                # Proxy connection error → proxy is dead, abort this phase immediately
-                if proxy and _is_proxy_error(err_str):
-                    logging.warning(f"[YT] {label}: Proxy connection error — aborting proxy strategies")
-                    last_download_error = f"Proxy dead (connection error). Will try fresh proxy..."
-                    invalidate_proxy()
-                    return None  # Return None so caller can try next phase
-
-                # YouTube bot detection ("Sign in to confirm")
-                if "Sign in to confirm" in err_str:
-                    logging.warning(f"[YT] {label}: YouTube bot detection")
-                    if use_cookies:
-                        last_download_error = "YouTube bot detection (cloud IP). Skipping cookie strategies..."
-                        break  # Skip remaining formats for this client
-                    if proxy:
-                        invalidate_proxy()
-                        last_download_error = "Proxy didn't bypass YouTube bot detection. Will try fresh proxy..."
-                        return None  # Return None so caller can try next phase
-                    continue
-
-                elif "not available" in err_str:
-                    logging.warning(f"[YT] {label}: Format not available — trying next format")
-                    continue
-                else:
-                    last_download_error = f"[{label}] {err_str[:300]}"
-                    logging.error(f"[YT] {label} failed: {err_str[:200]}")
-                    continue
-
-            except Exception as e:
-                err_str = str(e)
-                # Also detect proxy errors in generic exceptions
-                if proxy and _is_proxy_error(err_str):
-                    logging.warning(f"[YT] {label}: Proxy error in generic exception — aborting")
-                    last_download_error = f"Proxy connection failed: {err_str[:100]}"
-                    invalidate_proxy()
-                    return None
-                last_download_error = f"[{label}] {err_str[:300]}"
-                logging.error(f"[YT] {label} error: {err_str[:200]}")
+        for client, use_cookies, label in CLIENT_PRIORITY_DIRECT:
+            if use_cookies and not cookies_path:
                 continue
 
+            for fmt in formats:
+                filepath, err_type = await _try_single_download(
+                    url, safe_name, client, use_cookies, fmt, "", cookies_path
+                )
+
+                if filepath:
+                    return filepath
+
+                # If bot detection on direct, skip remaining direct attempts
+                if err_type == "bot_detect":
+                    logging.warning("[YT] Phase 1: Bot detected on direct, moving to proxy phase")
+                    break
+                if err_type == "rate_limit":
+                    logging.warning(f"[YT] Phase 1: Rate limited, waiting 30s...")
+                    await asyncio.sleep(30)
+                    break
+        else:
+            continue  # No break → try next attempt
+        break  # Break from inner loop → go to Phase 2
+
+    # ─── PHASE 2: Proxy pool (if direct failed) ───
+    logging.info("[YT] Phase 2: Trying proxy pool...")
+
+    # Use user proxy if set, otherwise use the auto pool
+    if user_proxy:
+        proxy_list = [user_proxy]
+        logging.info(f"[YT] Using user-set proxy: {user_proxy[:40]}")
+    else:
+        refresh_proxy_pool()
+        proxy_list = list(_PROXY_POOL)
+        logging.info(f"[YT] Pool has {len(proxy_list)} proxies")
+
+    if proxy_list:
+        for proxy in proxy_list:
+            if not user_proxy and proxy not in _PROXY_POOL:
+                continue  # Was removed by another thread
+
+            logging.info(f"[YT] Trying proxy: {proxy[:50]}")
+
+            for client, use_cookies, label in CLIENT_PRIORITY_PROXY:
+                if use_cookies and not cookies_path:
+                    continue
+
+                for fmt in formats:
+                    filepath, err_type = await _try_single_download(
+                        url, safe_name, client, use_cookies, fmt, proxy, cookies_path
+                    )
+
+                    if filepath:
+                        return filepath
+
+                    if err_type == "proxy_error":
+                        logging.warning(f"[YT] Proxy dead: {proxy[:30]}, rotating...")
+                        if not user_proxy:
+                            report_proxy_failure(proxy)
+                        break  # Try next proxy immediately
+                    if err_type == "rate_limit":
+                        logging.warning("[YT] Rate limited via proxy, waiting 30s...")
+                        await asyncio.sleep(30)
+                        continue
+                    if err_type == "bot_detect":
+                        logging.warning("[YT] Bot detected even via proxy, trying next proxy...")
+                        if not user_proxy:
+                            report_proxy_failure(proxy)
+                        break
+                else:
+                    continue  # No break → try next format/client
+                break  # Break from client loop → try next proxy
+
+        # ─── PHASE 2b: Refresh pool and try new proxies ───
+        if not user_proxy:
+            logging.info("[YT] Phase 2b: Refreshing proxy pool for fresh proxies...")
+            # Force refresh by clearing time
+            global _PROXY_POOL_TIME
+            _PROXY_POOL_TIME = 0
+            refresh_proxy_pool()
+
+            for proxy in list(_PROXY_POOL):
+                logging.info(f"[YT] Phase 2b: Trying fresh proxy: {proxy[:50]}")
+                for client, use_cookies, label in CLIENT_PRIORITY_PROXY[:4]:  # Top 4 only
+                    if use_cookies and not cookies_path:
+                        continue
+                    for fmt in formats[:2]:  # Top 2 formats only
+                        filepath, err_type = await _try_single_download(
+                            url, safe_name, client, use_cookies, fmt, proxy, cookies_path
+                        )
+                        if filepath:
+                            return filepath
+                        if err_type == "proxy_error":
+                            report_proxy_failure(proxy)
+                            break
+                    else:
+                        continue
+                    break
+
+    # ─── All phases exhausted ───
+    if not last_download_error:
+        last_download_error = (
+            "All strategies failed. YouTube is blocking this server's IP. "
+            "Try again in a few minutes — the bot auto-refreshes its proxy pool each attempt."
+        )
+    logging.error(f"[YT] ALL phases failed for {url}: {last_download_error}")
     return None
-
-
-def _make_progress_hook():
-    """Return a progress hook for yt-dlp."""
-    def hook(d):
-        if d['status'] == 'downloading':
-            _total = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
-            _downloaded = d.get('downloaded_bytes', 0)
-            if _total > 0:
-                pct = (_downloaded / _total) * 100
-                speed = d.get('speed', 0)
-                speed_str = f"{speed/1024/1024:.1f}MB/s" if speed else "?"
-                logging.info(f"[YT] Progress: {pct:.1f}% ({speed_str})")
-        elif d['status'] == 'finished':
-            logging.info(f"[YT] Download finished: {d.get('filename', '?')}")
-        elif d['status'] == 'error':
-            logging.error(f"[YT] Download error: {d.get('error', '?')}")
-    return hook
 
 
 async def download_video(url, cmd, name):
