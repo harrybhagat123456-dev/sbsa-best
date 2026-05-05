@@ -374,6 +374,16 @@ async def download_youtube_video(url, name, quality="720"):
     global last_download_error
     last_download_error = ""
 
+    # Load proxy from vars (set via env var YT_PROXY_URL or /setproxy command)
+    try:
+        from vars import yt_proxy_url as _proxy_url
+        proxy = _proxy_url.strip() if _proxy_url else ""
+    except ImportError:
+        proxy = ""
+
+    if proxy:
+        logging.info(f"[YT] Using proxy: {proxy[:50]}...")
+
     cookies_path = _resolve_cookies_path()
     base_name = name if name else "youtube_video"
     safe_name = re.sub(r'[<>:"/\\|?*]', '', base_name)[:200]
@@ -420,6 +430,10 @@ async def download_youtube_video(url, name, quality="720"):
                 'skip_download': True,  # Extract only first
                 'extractor_args': {'youtube': {'player_client': [client]}},
             }
+
+            # Add proxy if configured (bypasses cloud IP bot detection)
+            if proxy:
+                ydl_opts['proxy'] = proxy
 
             if use_cookies and cookies_path:
                 ydl_opts['cookiefile'] = cookies_path

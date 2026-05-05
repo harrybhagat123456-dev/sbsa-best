@@ -63,3 +63,8 @@ photologo = os.environ.get("PHOTOLOGO", "https://iili.io/KuCBoV2.jpg")
 photoyt = os.environ.get("PHOTOYT", "https://iili.io/KuCBoV2.jpg")
 photocp = os.environ.get("PHOTOCP", "https://iili.io/KuCBoV2.jpg")
 photozip = os.environ.get("PHOTOZIP", "https://iili.io/KuCBoV2.jpg")
+
+# ── YouTube proxy (for bypassing cloud IP bot detection) ──
+# Set in Render env vars or via /setproxy bot command
+# Format: http://user:pass@host:port or socks5://user:pass@host:port
+yt_proxy_url = os.environ.get("YT_PROXY_URL", "")

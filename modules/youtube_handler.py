@@ -671,6 +671,50 @@ async def y2t_handler(bot: Client, message: Message):
 # Register handlers
 # ---------------------------------------------------------------------------
 
+async def setproxy_handler(client: Client, m: Message):
+    """Set YouTube proxy to bypass cloud IP bot detection.
+    Usage: /setproxy http://user:pass@host:port
+    Usage: /setproxy off (to disable)
+    """
+    import vars as _vars
+    try:
+        arg = m.text.split(maxsplit=1)[1].strip() if len(m.text.split()) > 1 else ""
+    except IndexError:
+        arg = ""
+
+    if not arg:
+        current = _vars.yt_proxy_url or "None"
+        await m.reply_text(
+            "🔧 **YouTube Proxy Settings**\n\n"
+            f"**Current proxy:** `{current}`\n\n"
+            "**Usage:**\n"
+            "• `/setproxy http://user:pass@host:port`\n"
+            "• `/setproxy socks5://user:pass@host:port`\n"
+            "• `/setproxy off` — disable proxy\n\n"
+            "<blockquote>YouTube blocks cloud/datacenter IPs. Use a **residential proxy** "
+            "to bypass bot detection. Set it here or as env var `YT_PROXY_URL` in Render.</blockquote>"
+        )
+        return
+
+    if arg.lower() in ("off", "none", "remove", "disable", "clear"):
+        _vars.yt_proxy_url = ""
+        await m.reply_text("✅ **YouTube proxy disabled.**\nYouTube downloads will use direct connection (may fail on cloud IPs).")
+        return
+
+    # Basic validation
+    if not (arg.startswith("http://") or arg.startswith("https://") or arg.startswith("socks4://") or arg.startswith("socks5://")):
+        await m.reply_text("❌ **Invalid proxy format.**\n\nUse:\n• `http://user:pass@host:port`\n• `socks5://user:pass@host:port`")
+        return
+
+    _vars.yt_proxy_url = arg
+    await m.reply_text(
+        f"✅ **YouTube proxy updated!**\n\n"
+        f"**Proxy:** `{arg}`\n\n"
+        "<blockquote>Try downloading a YouTube video to test. "
+        "If it fails, check if the proxy is working and supports HTTPS.</blockquote>"
+    )
+
+
 def register_youtube_handlers(bot):
     bot.on_message(filters.command("getcookies") & filters.private)(getcookies_handler)
     bot.on_message(filters.command(["ytcookies", "ytcookie"]) & filters.private)(ytcookies_handler)
@@ -681,5 +725,6 @@ def register_youtube_handlers(bot):
     bot.on_message(filters.command(["clearhistory"]))(clearhistory_handler)
     bot.on_message(filters.command(["allhistory"]))(allhistory_handler)
     bot.on_message(filters.command(["resetallhistory"]))(resetallhistory_handler)
+    bot.on_message(filters.command(["setproxy"]))(setproxy_handler)
     bot.on_callback_query(filters.regex(r"^clear_my_history$"))(clear_history_callback)
-    print("[YouTube Handler] Handlers registered. /ytm=simple YT, /yth=YT+resume, /viewhistory=list, /clearhistory")
+    print("[YouTube Handler] Handlers registered. /ytm=simple YT, /yth=YT+resume, /viewhistory=list, /clearhistory, /setproxy=proxy")
