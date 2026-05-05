@@ -552,18 +552,24 @@ def _yt_dlp_download(ydl_opts):
         return pool.submit(_do_download).result()
 
 
+def _is_proxy_error(err_str):
+    """Detect if an error is caused by a dead/unreachable proxy."""
+    proxy_indicators = [
+        "Unable to connect to proxy",
+        "Cannot connect to proxy",
+        "ProxyError",
+        "CONNECTION_RESET",
+        "Connection to",
+    ]
+    return any(ind in err_str for ind in proxy_indicators)
+
+
 async def download_youtube_video(url, name, quality="720"):
     """
     Robust YouTube downloader with multi-strategy fallback.
 
-    Strategies tried in order:
-    1. Cookies + web client (best for login-required videos)
-    2. Cookies + ios client (fallback for age-restricted)
-    3. Cookies + tv_simply client (fallback)
-    4. No cookies + web client (works for public videos)
-    5. No cookies + tv_simply client
-
-    Each strategy tries multiple format selectors.
+    Phase 1: Try all strategies (with proxy if available)
+    Phase 2: If proxy dies mid-download, invalidate it and retry without proxy
 
     Returns: path to downloaded file or None on failure.
     """
@@ -571,7 +577,6 @@ async def download_youtube_video(url, name, quality="720"):
     last_download_error = ""
 
     # Load proxy from vars (set via env var YT_PROXY_URL or /setproxy command)
-    # If no proxy set, auto-fetch a fresh free proxy from proxyscrape
     try:
         from vars import yt_proxy_url as _proxy_url
         proxy = _proxy_url.strip() if _proxy_url else ""
@@ -580,9 +585,6 @@ async def download_youtube_video(url, name, quality="720"):
 
     if not proxy:
         proxy = _auto_fetch_proxy()
-
-    if proxy:
-        logging.info(f"[YT] Using proxy: {proxy[:60]}")
 
     cookies_path = _resolve_cookies_path()
     base_name = name if name else "youtube_video"
@@ -604,9 +606,58 @@ async def download_youtube_video(url, name, quality="720"):
             "best",
         ]
 
-    # Define client strategies: try without cookies first if we have a proxy
-    # (proxy is more likely to work without cookies on a fresh residential IP)
+    # ── Phase 1: Try with proxy if available ──
+    result = await _run_download_strategies(
+        url, safe_name, quality, proxy, cookies_path,
+        format_strategies, use_proxy=bool(proxy)
+    )
+    if result:
+        return result
+
+    # ── Phase 2: If proxy was used and died, try fetching a NEW proxy ──
     if proxy:
+        logging.info("[YT] Proxy strategies all failed, trying with a fresh proxy...")
+        invalidate_proxy()
+        fresh_proxy = _auto_fetch_proxy()
+        if fresh_proxy and fresh_proxy != proxy:
+            logging.info(f"[YT] Got new proxy: {fresh_proxy[:50]}")
+            result = await _run_download_strategies(
+                url, safe_name, quality, fresh_proxy, cookies_path,
+                format_strategies, use_proxy=True
+            )
+            if result:
+                return result
+
+    # ── Phase 3: Last resort — try direct (no proxy) ──
+    if proxy:
+        logging.info("[YT] All proxy attempts failed, trying direct connection as last resort...")
+        result = await _run_download_strategies(
+            url, safe_name, quality, "", cookies_path,
+            format_strategies, use_proxy=False
+        )
+        if result:
+            return result
+
+    # All phases failed
+    if not last_download_error:
+        last_download_error = "All download strategies failed (tried proxy + direct). YouTube is blocking this server's IP. Try again in a few minutes — the bot auto-fetches fresh proxies each time."
+    logging.error(f"[YT] ALL strategies failed for {url}: {last_download_error}")
+    return None
+
+
+async def _run_download_strategies(url, safe_name, quality, proxy, cookies_path, format_strategies, use_proxy):
+    """
+    Run the multi-strategy download loop with given proxy setting.
+    Returns path to downloaded file or None.
+    Sets last_download_error on failure.
+    """
+    global last_download_error
+
+    if proxy:
+        logging.info(f"[YT] Using proxy: {proxy[:60]}")
+
+    # Define client strategies based on proxy availability
+    if use_proxy and proxy:
         client_strategies = [
             ("tv_simply", False, "tv+proxy"),
             ("ios", False, "ios+proxy"),
@@ -624,7 +675,7 @@ async def download_youtube_video(url, name, quality="720"):
             ("tv_simply", False, "tv (no cookies)"),
         ]
 
-    for client, use_cookies, label in client_strategies:
+    for client, use_cookies, label in list(client_strategies):
         # Skip cookie strategies if no cookies file
         if use_cookies and not cookies_path:
             logging.info(f"[YT] Skipping {label} — no cookies file")
@@ -642,11 +693,10 @@ async def download_youtube_video(url, name, quality="720"):
                 'extractor_args': {'youtube': {'player_client': [client]}},
                 'socket_timeout': 20,
                 'retries': 3,
-                # Disable bgutil plugin to avoid the 127.0.0.1:4416 ping warning
                 'plugin_dirs': [],
             }
 
-            # Add proxy if configured (bypasses cloud IP bot detection)
+            # Add proxy if configured
             if proxy:
                 ydl_opts['proxy'] = proxy
 
@@ -689,17 +739,26 @@ async def download_youtube_video(url, name, quality="720"):
 
             except yt_dlp.utils.DownloadError as e:
                 err_str = str(e)
-                # If "Sign in to confirm" — cookies are dead or IP is blocked
+
+                # Proxy connection error → proxy is dead, abort this phase immediately
+                if proxy and _is_proxy_error(err_str):
+                    logging.warning(f"[YT] {label}: Proxy connection error — aborting proxy strategies")
+                    last_download_error = f"Proxy dead (connection error). Will try fresh proxy..."
+                    invalidate_proxy()
+                    return None  # Return None so caller can try next phase
+
+                # YouTube bot detection ("Sign in to confirm")
                 if "Sign in to confirm" in err_str:
-                    logging.warning(f"[YT] {label}: Login/bot detection — skipping cookie strategies")
+                    logging.warning(f"[YT] {label}: YouTube bot detection")
                     if use_cookies:
-                        last_download_error = "YouTube requires sign-in (cloud IP detected). Using proxy to bypass..."
-                        break  # Skip remaining cookie strategies for this client
+                        last_download_error = "YouTube bot detection (cloud IP). Skipping cookie strategies..."
+                        break  # Skip remaining formats for this client
                     if proxy:
-                        # Proxy failed too, invalidate it so next call fetches a new one
                         invalidate_proxy()
-                        last_download_error = "Proxy didn't bypass YouTube bot detection. Will fetch new proxy on next try..."
+                        last_download_error = "Proxy didn't bypass YouTube bot detection. Will try fresh proxy..."
+                        return None  # Return None so caller can try next phase
                     continue
+
                 elif "not available" in err_str:
                     logging.warning(f"[YT] {label}: Format not available — trying next format")
                     continue
@@ -709,17 +768,17 @@ async def download_youtube_video(url, name, quality="720"):
                     continue
 
             except Exception as e:
-                last_download_error = f"[{label}] {str(e)[:300]}"
-                logging.error(f"[YT] {label} error: {str(e)[:200]}")
+                err_str = str(e)
+                # Also detect proxy errors in generic exceptions
+                if proxy and _is_proxy_error(err_str):
+                    logging.warning(f"[YT] {label}: Proxy error in generic exception — aborting")
+                    last_download_error = f"Proxy connection failed: {err_str[:100]}"
+                    invalidate_proxy()
+                    return None
+                last_download_error = f"[{label}] {err_str[:300]}"
+                logging.error(f"[YT] {label} error: {err_str[:200]}")
                 continue
 
-    # All strategies failed
-    if not last_download_error:
-        if not proxy:
-            last_download_error = "All strategies failed. YouTube is blocking this server's IP. The bot auto-fetches free proxies but none worked this time. Try again in a few minutes (proxy list refreshes), or set a reliable proxy via /setproxy command."
-        else:
-            last_download_error = "All strategies failed even with proxy. The video may be private, age-restricted, or geo-blocked."
-    logging.error(f"[YT] ALL strategies failed for {url}: {last_download_error}")
     return None
 
 
