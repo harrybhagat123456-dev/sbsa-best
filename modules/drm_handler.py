@@ -2055,69 +2055,6 @@ async def _drm_handler_impl(bot: Client, m: Message):
                     await asyncio.sleep(UPLOAD_DELAY)
                     continue
 
-                elif "youtube.com" in url or "youtu.be" in url:
-                    # ── YouTube custom downloader (yt_dlp Python API, no subprocess) ──
-                    remaining_links = len(links) - count
-                    progress = (count / len(links)) * 100
-                    Show1 = f"<blockquote>🚀𝐏𝐫𝐨𝐠𝐫𝐞𝐬𝐬 » {progress:.2f}%</blockquote>\n┃\n" \
-                           f"┣🔗𝐈𝐧𝐝ᴇx » {count}/{len(links)}\n┃\n" \
-                           f"╰━🖇️𝐑ᴇᴍᴀɪɴ » {remaining_links}\n" \
-                           f"━━━━━━━━━━━━━━━━━━━━━━━━\n" \
-                           f"<blockquote><b>⚡YouTube Downloading...⏳</b></blockquote>\n┃\n" \
-                           f'┣💃𝐂𝐫ᴇᴅɪᴛ » {CR}\n┃\n' \
-                           f"╰━📚𝐁ᴀᴛᴄʜ » {b_name}\n" \
-                           f"{_topic_part}" \
-                           f"━━━━━━━━━━━━━━━━━━━━━━━━━\n" \
-                           f"<blockquote>📚𝐓ɪᴛʟᴇ » {namef}</blockquote>\n┃\n" \
-                           f"┣🍁𝐐ᴜᴀʟɪᴛʏ » Best Available\n┃\n" \
-                           f'┣━🔗𝐋ɪɴᴋ » <a href="{link0}">**Original Link**</a>\n┃\n' \
-                           f'╰━━━━━━━━━━━━━━━━━━━━━━━━━\n' \
-                           f"🛑**Send** /stop **to stop process**\n┃\n" \
-                           f"╰━✦𝐁ᐨ𝐭 𝐌𝐚ᴅ𝐞 𝐁𝐲 ✦ {CREDIT}"
-                    Show = f"<i><b>🎬 YouTube Video Downloading</b></i>\n<blockquote><b>{str(count).zfill(3)}) {name1}</b></blockquote>"
-                    prog = await bot.send_message(channel_id, Show, disable_web_page_preview=True)
-                    prog1 = await m.reply_text(Show1, disable_web_page_preview=True)
-                    _yt_err_msg = None
-                    _yt_fallback_used = False
-                    try:
-                        # YouTube always downloads best available quality (no cookies)
-                        res_file = await helper.download_youtube_video(url, name, quality="best")
-                    except Exception as _yt_err:
-                        _yt_err_msg = str(_yt_err)
-                        _yt_err_lower = _yt_err_msg.lower()
-                        print(f"[YT_HANDLER] yt-dlp failed: {_yt_err_msg[:120]}")
-
-                        # ── Fallback: Try Invidious proxy if bot detection ──
-                        if 'not a bot' in _yt_err_lower or 'sign in' in _yt_err_lower:
-                            print(f"[YT_HANDLER] Trying Invidious fallback for {url}")
-                            try:
-                                res_file = await helper.download_youtube_fallback(url, name)
-                                _yt_fallback_used = True
-                                _yt_err_msg = None  # Clear error since fallback worked
-                            except Exception as _fb_err:
-                                _yt_err_msg = f"yt-dlp: {_yt_err_msg[:100]} | Fallback: {str(_fb_err)[:100]}"
-                                print(f"[YT_HANDLER] Fallback also failed: {str(_fb_err)[:100]}")
-                                res_file = None
-                        else:
-                            res_file = None
-                    filename = res_file
-                    await prog1.delete(True)
-                    await prog.delete(True)
-                    if not filename or not os.path.isfile(filename):
-                        _dl_error = _yt_err_msg or getattr(helper, 'last_download_error', '') or 'YouTube download failed. The video may be private, restricted, or blocked in this server region.'
-                        await bot.send_message(channel_id, f'⚠️**Downloading Failed**⚠️\n**Name** =>> `{str(count).zfill(3)} {name1}`\n**Url** =>> {url}\n\n<blockquote expandable><i><b>Failed Reason: {_dl_error}</b></i></blockquote>', disable_web_page_preview=True)
-                        failed_links.append(f"{name1} : {link0}")
-                        count += 1
-                        failed_count += 1
-                        continue
-                    _sent = await helper.send_vid(bot, m, cc, filename, vidwatermark, thumb, name, prog, channel_id, topic_id=_link_topic_id)
-                    if _sent:
-                        _chap = link_chapters[i] if i < len(link_chapters) else ""
-                        await _pin_heading(_chap, f'{str(count).zfill(3)} {name1}', _sent.id, topic_id=_link_topic_id)
-                    count += 1
-                    await asyncio.sleep(UPLOAD_DELAY)
-                    continue
-
                 else:
                     remaining_links = len(links) - count
                     progress = (count / len(links)) * 100
