@@ -290,7 +290,7 @@ async def ytm_handler(bot: Client, m: Message):
                 )
                 output_template = f"{str(count).zfill(3)} {clean_name}"
                 cmd = (f'yt-dlp -x --audio-format mp3 --cookies {cookies_file_path} '
-                       f'--extractor-args "youtube:player_client=tv_simply,ios,android_vr;po_token=web" '
+                       f'--extractor-args "youtube:po_token=web" '
                        f'"{url}" -o "{output_template}.%(ext)s" {_YTDLP_EXTRA}')
                 result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
 
@@ -486,7 +486,7 @@ async def history_handler(bot: Client, m: Message):
                 )
                 output_template = f"{str(count).zfill(3)} {clean_name}"
                 cmd = (f'yt-dlp -x --audio-format mp3 --cookies {cookies_file_path} '
-                       f'--extractor-args "youtube:player_client=tv_simply,ios,android_vr;po_token=web" '
+                       f'--extractor-args "youtube:po_token=web" '
                        f'"{url}" -o "{output_template}.%(ext)s" {_YTDLP_EXTRA}')
                 result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
 
