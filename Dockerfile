@@ -8,8 +8,16 @@ RUN apt-get update && \
     gcc g++ make cmake wget git \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Deno (JS runtime for yt-dlp EJS challenge solving)
+# Install Deno (JS runtime for yt-dlp EJS n-challenge solving + bgutil PO token generation)
 RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh
+ENV PATH="/usr/local/bin:$PATH"
+RUN deno --version
+
+# Also install Node.js as fallback JS runtime for yt-dlp
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/*
+RUN node --version
 
 # Build Bento4 (mp4decrypt)
 RUN wget -q https://github.com/axiomatic-systems/Bento4/archive/v1.6.0-639.zip && \
@@ -29,8 +37,11 @@ COPY . .
 # yt-dlp[default] includes EJS scripts for n-challenge solving (crucial!)
 RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel \
     && pip3 install --no-cache-dir --upgrade -r sainibots.txt \
-    && pip3 install --no-cache-dir "yt-dlp[default]" \
-    && pip3 install --no-cache-dir bgutil-ytdlp-pot-provider
+    && pip3 install --no-cache-dir --upgrade "yt-dlp[default]" \
+    && pip3 install --no-cache-dir --upgrade bgutil-ytdlp-pot-provider
+
+# Verify yt-dlp can find JS runtime
+RUN yt-dlp --version && yt-dlp --list-interfaces 2>&1 | head -5
 
 # Expose the port Render expects
 EXPOSE 8000
