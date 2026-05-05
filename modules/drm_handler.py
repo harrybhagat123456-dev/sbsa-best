@@ -118,6 +118,78 @@ def _claim_download_message(message):
 
 
 # ============================================================
+# FORWARD ALL — stores topic message ranges for callback buttons
+# ============================================================
+_fwd_range_store = {}     # key -> {channel_id, message_ids, topic_name}
+_FWD_MAX_STORE = 200      # keep at most N entries (auto-cleanup)
+
+def _store_fwd_range(channel_id, message_ids, topic_name):
+    """Store a forward range and return a short callback key."""
+    global _fwd_range_store
+    # Cleanup old entries if store is too large
+    if len(_fwd_range_store) > _FWD_MAX_STORE:
+        _oldest = list(_fwd_range_store.keys())[:len(_fwd_range_store) // 2]
+        for k in _oldest:
+            _fwd_range_store.pop(k, None)
+    key = f"fwd_{abs(hash(f'{channel_id}:{topic_name}:{message_ids[0] if message_ids else 0}')) % 999999}"
+    _fwd_range_store[key] = {
+        "channel_id": channel_id,
+        "message_ids": list(message_ids),
+        "topic_name": topic_name,
+    }
+    return key
+
+
+async def _fwd_all_callback_handler(client, callback):
+    """Handle 'Forward All' inline button clicks — forwards topic messages to user's PM."""
+    from pyrogram.types import InlineKeyboardMarkup
+    key = callback.data
+    data = _fwd_range_store.get(key)
+    if not data:
+        await callback.answer("Error: Forward data expired or not found.", show_alert=True)
+        return
+
+    user_id = callback.from_user.id
+    msg_ids = data["message_ids"]
+    from_chat = data["channel_id"]
+    topic_name = data["topic_name"]
+
+    if not msg_ids:
+        await callback.answer("No messages to forward.", show_alert=True)
+        return
+
+    await callback.answer(f"Forwarding {len(msg_ids)} messages...", show_alert=False)
+
+    forwarded = 0
+    failed = 0
+    for mid in msg_ids:
+        try:
+            await client.forward_messages(user_id, from_chat, mid)
+            forwarded += 1
+            await asyncio.sleep(0.3)  # small delay to avoid flood
+        except FloodWait as e:
+            await asyncio.sleep(e.value + 1)
+            try:
+                await client.forward_messages(user_id, from_chat, mid)
+                forwarded += 1
+            except Exception:
+                failed += 1
+        except Exception as e:
+            print(f"[FwdAll] Failed to forward msg {mid}: {e}")
+            failed += 1
+
+    # Update the button text to show result
+    try:
+        _result_text = f"✅ Forwarded {forwarded} messages"
+        if failed:
+            _result_text += f" ({failed} failed)"
+        _btn = InlineKeyboardMarkup([[InlineKeyboardButton(_result_text, callback_data="fwd_done")]])
+        await callback.message.edit_reply_markup(reply_markup=_btn)
+    except Exception:
+        pass
+
+
+# ============================================================
 # FLOOD CONTROL CONFIGURATION
 # ============================================================
 UPLOAD_DELAY = 0          # no artificial delay — let Telegram flood control handle it
@@ -1112,6 +1184,7 @@ async def _drm_handler_impl(bot: Client, m: Message):
     _fwd_prev_topic_id = None
     _fwd_prev_start_msg_id = None
     _fwd_prev_last_msg_id = None
+    _fwd_msg_ids = []          # ALL message IDs for the current topic (for forward all)
 
     def _local_msg_url(msg_id, thread_id=None):
         cid = str(channel_id)
@@ -1121,9 +1194,10 @@ async def _drm_handler_impl(bot: Client, m: Message):
         return f"https://t.me/c/{cid_short}/{msg_id}"
 
     async def _pin_heading(chap, fallback_label, msg_id, topic_id=None):
-        nonlocal _fwd_prev_last_msg_id
+        nonlocal _fwd_prev_last_msg_id, _fwd_msg_ids
         if chap:
             _fwd_prev_last_msg_id = msg_id
+            _fwd_msg_ids.append(msg_id)
         # Topic headers are already sent before upload via _send_topic_header.
         # Only track nav entries for files that have no chapter heading.
         if not chap:
@@ -1144,6 +1218,7 @@ async def _drm_handler_impl(bot: Client, m: Message):
 
     async def _send_forward_all_marker(chap, topic_id=None):
         """Send a 'Forward All' marker message at the end of a topic upload."""
+        nonlocal _fwd_msg_ids
         from pyrogram.types import InlineKeyboardButton as _IKB, InlineKeyboardMarkup as _IKM
         if not chap:
             return
@@ -1151,23 +1226,33 @@ async def _drm_handler_impl(bot: Client, m: Message):
             _fwd_text = (
                 f"<b>✅ {chap.upper()} — UPLOAD COMPLETE</b>\n\n"
                 f"<blockquote>📋 <b>FORWARD ALL THIS TOPIC</b>\n"
-                f"Open the start/end buttons, select only this topic's messages, and forward them together.</blockquote>"
+                f"Click the button below to forward all messages to your Saved Messages.</blockquote>"
             )
             _buttons = []
+            # Primary: callback button that actually forwards messages
+            _fwd_key = _store_fwd_range(channel_id, _fwd_msg_ids, chap)
+            _msg_count = len(_fwd_msg_ids)
+            _buttons.append([_IKB(f"📤 Forward All ({_msg_count} msgs)", callback_data=_fwd_key)])
+            # Secondary: URL links for manual navigation (start/end)
+            _url_row = []
             if _fwd_prev_start_msg_id:
-                _buttons.append(_IKB("⬆️ Topic Start", url=_local_msg_url(_fwd_prev_start_msg_id, topic_id)))
+                _url_row.append(_IKB("⬆️ Start", url=_local_msg_url(_fwd_prev_start_msg_id, topic_id)))
             if _fwd_prev_last_msg_id:
-                _buttons.append(_IKB("✅ Topic End", url=_local_msg_url(_fwd_prev_last_msg_id, topic_id)))
+                _url_row.append(_IKB("✅ End", url=_local_msg_url(_fwd_prev_last_msg_id, topic_id)))
+            if _url_row:
+                _buttons.append(_url_row)
             _fwd_kwargs = {
                 "chat_id": channel_id,
                 "text": _fwd_text,
                 "disable_web_page_preview": True,
             }
             if _buttons:
-                _fwd_kwargs["reply_markup"] = _IKM([_buttons])
+                _fwd_kwargs["reply_markup"] = _IKM(_buttons)
             if topic_id:
                 _fwd_kwargs["message_thread_id"] = topic_id
             await bot.send_message(**_fwd_kwargs)
+            # Reset message ID list for next topic
+            _fwd_msg_ids = []
         except Exception as _fe:
             print(f"[ForwardAll] Failed to send marker for '{chap}': {_fe}")
 
@@ -1192,6 +1277,7 @@ async def _drm_handler_impl(bot: Client, m: Message):
             if _new_header_id:
                 _fwd_prev_start_msg_id = _new_header_id
                 _fwd_prev_last_msg_id = _new_header_id
+                _fwd_msg_ids = [_new_header_id]
             _topic_part = f"┃\n┣📖𝐓𝐨𝐩𝐢𝐜 » {_chap_now}\n" if _chap_now else ""
 
             if globals.cancel_requested:
@@ -1334,7 +1420,7 @@ async def _drm_handler_impl(bot: Client, m: Message):
                 url = url.split("bcov_auth")[0]+bcov
 
             elif "childId" in url and "parentId" in url and "anonymouspwplayer" not in url:
-                url = f"https://anonymouspwplayerr-3cfbfedeb317.herokuapp.com/pw?url={}&token={pwtoken}"
+                url = f"https://anonymouspwplayerr-3cfbfedeb317.herokuapp.com/pw?url={url}&token={pwtoken}"
                         
             elif 'encrypted.m' in url:
                 appxkey = url.split('*')[1]
@@ -2272,3 +2358,6 @@ def register_drm_handlers(bot):
     
     custom_filter = f.create(is_valid_download_message)
     bot.on_message(f.private & custom_filter, group=10)(drm_handler)
+
+    # ── Register "Forward All" callback handler ────────────────────────────
+    bot.on_callback_query(f.regex(r"^fwd_\d+$") & f.user(AUTH_USERS), group=5)(_fwd_all_callback_handler)
