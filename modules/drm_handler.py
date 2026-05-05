@@ -1271,7 +1271,7 @@ async def _drm_handler_impl(bot: Client, m: Message):
             _raw_name = re.sub(r'^\([^)]+\)\s*', '', _raw_name)         # remove (Category)
             _raw_name = re.sub(r'^\[[^\]]+\]\s*', '', _raw_name)        # remove [Topic]
             _raw_name = re.sub(r'\{DATE-[^}]+\}\s*', '', _raw_name)     # remove {DATE-...}
-            name1 = _raw_name.replace("(", "[").replace(")", "]").replace("_", "").replace("\t", "").replace(":", "").replace("/", "").replace("+", "").replace("#", "").replace("|", "").replace("@", "").replace("*", "").replace(".", "").replace("https", "").replace("http", "").strip()
+            name1 = _raw_name.replace("(", "[").replace(")", "]").replace("_", "").replace("\t", "").replace(":", "").replace("/", "").replace("+", "").replace("#", "").replace("|", "").replace("@", "").replace("*", "").replace("&", "").replace(".", "").replace("https", "").replace("http", "").strip()
             if m.text:
                 if "youtu" in url:
                     oembed_url = f"https://www.youtube.com/oembed?url={url}&format=json"
@@ -1743,7 +1743,13 @@ async def _drm_handler_impl(bot: Client, m: Message):
                         _cw_kid, _cw_key = cw_keys_string.split(':', 1)
                     else:
                         _cw_kid, _cw_key = cw_keys_string, ""
-                    res_file = await helper.download_careerwill_drm(url, _cw_kid, _cw_key, _cw_path, name, raw_text2)
+                    # Default quality fallback
+                    _cw_quality = raw_text2 if raw_text2 and raw_text2.isdigit() else "720"
+                    try:
+                        res_file = await helper.download_careerwill_drm(url, _cw_kid, _cw_key, _cw_path, name, _cw_quality)
+                    except Exception as _cw_err:
+                        print(f"[CW_DRM] Error: {_cw_err}")
+                        res_file = None
                     filename = res_file
                     await prog1.delete(True)
                     await prog.delete(True)

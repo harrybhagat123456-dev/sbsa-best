@@ -703,7 +703,13 @@ async def download_careerwill_drm(mpd_url, kid, key, output_path, output_name, q
 
     # 1. Parse MPD
     print(f"[CW_DRM] Parsing MPD: {mpd_url}")
-    parsed = _parse_dash_mpd(mpd_url, quality)
+    # Ensure quality is a valid number string
+    try:
+        _q = int(quality)
+    except (ValueError, TypeError):
+        _q = 720
+        print(f"[CW_DRM] Invalid quality '{quality}', defaulting to 720")
+    parsed = _parse_dash_mpd(mpd_url, str(_q))
     video_rep = parsed['video']
     audio_rep = parsed['audio']
     session = parsed['session']
