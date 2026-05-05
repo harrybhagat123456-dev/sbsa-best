@@ -1344,7 +1344,10 @@ async def _drm_handler_impl(bot: Client, m: Message):
                 # CareerWill DRM DASH with ClearKey: mpd_url*kid:key
                 _cw_parts = url.split('*', 1)
                 url = _cw_parts[0].strip()
-                cw_keys_string = f"--key {_cw_parts[1].strip()}"
+                _cw_creds = _cw_parts[1].strip().split(':')
+                cw_kid = _cw_creds[0] if len(_cw_creds) > 0 else ""
+                cw_key = _cw_creds[1] if len(_cw_creds) > 1 else ""
+                cw_keys_string = f"{cw_kid}:{cw_key}"  # Mark as CareerWill DRM
 
             if "youtu" in url:
                 ytf = f"bv*[height<={raw_text2}][ext=mp4]+ba[ext=m4a]/b[height<=?{raw_text2}]"
@@ -1735,7 +1738,12 @@ async def _drm_handler_impl(bot: Client, m: Message):
                         _cw_path = path
                     except NameError:
                         _cw_path = f"./downloads/{m.chat.id}"
-                    res_file = await helper.decrypt_and_merge_video(url, cw_keys_string, _cw_path, name, raw_text2)
+                    # Parse kid:key from cw_keys_string (set during URL transformation)
+                    if ':' in cw_keys_string:
+                        _cw_kid, _cw_key = cw_keys_string.split(':', 1)
+                    else:
+                        _cw_kid, _cw_key = cw_keys_string, ""
+                    res_file = await helper.download_careerwill_drm(url, _cw_kid, _cw_key, _cw_path, name, raw_text2)
                     filename = res_file
                     await prog1.delete(True)
                     await prog.delete(True)

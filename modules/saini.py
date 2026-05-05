@@ -3,6 +3,7 @@ import re
 import time
 import mmap
 import datetime
+import xml.etree.ElementTree as ET
 import aiohttp
 import aiofiles
 import asyncio
@@ -12,12 +13,13 @@ import tgcrypto
 import subprocess
 import concurrent.futures
 from math import ceil
+from urllib.parse import urljoin
 from utils import progress_bar
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from pyrogram.errors import FloodWait
 from io import BytesIO
-from pathlib import Path  
+from pathlib import Path
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad
 from base64 import b64decode
@@ -446,3 +448,325 @@ async def send_vid(bot: Client, m: Message, cc, filename, vidwatermark, thumb, n
     if os.path.exists(f"{filename}.jpg"):
         os.remove(f"{filename}.jpg")
     return sent_msg
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CareerWill DRM DASH Downloader (custom, no yt-dlp)
+# Downloads segments directly with requests → mp4decrypt → ffmpeg merge
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _parse_iso8601_duration(duration_str):
+    """Parse ISO 8601 duration like PT93M19.200S or PT1H30M0S → seconds."""
+    total = 0.0
+    m = re.match(r'PT(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?', duration_str)
+    if m:
+        total = float(m.group(1) or 0) * 3600 + float(m.group(2) or 0) * 60 + float(m.group(3) or 0)
+    return total
+
+
+def _parse_dash_mpd(mpd_url, quality="720"):
+    """
+    Parse DASH MPD manifest and return selected video+audio representations.
+    Returns dict with 'video' and 'audio' representation info, or raises on error.
+    """
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': '*/*',
+        'Accept-Language': 'en-US,en;q=0.9',
+    })
+
+    resp = session.get(mpd_url, timeout=30)
+    resp.raise_for_status()
+
+    root = ET.fromstring(resp.text)
+
+    # ── Namespace handling ──────────────────────────────────────────────────
+    _ns = ''
+    if root.tag.startswith('{'):
+        _ns = root.tag.split('}')[0] + '}'
+
+    def _find(parent, tag):
+        return parent.find(f'{_ns}{tag}')
+
+    def _findall(parent, tag):
+        return parent.findall(f'{_ns}{tag}')
+
+    def _resolve(base, url):
+        if url.startswith('http'):
+            return url
+        return urljoin(base, url)
+
+    # ── Base URL resolution ─────────────────────────────────────────────────
+    mpd_base = mpd_url.rsplit('/', 1)[0] + '/'
+    bu = _find(root, 'BaseURL')
+    if bu is not None and bu.text:
+        mpd_base = _resolve(mpd_base, bu.text.strip())
+        if not mpd_base.endswith('/'):
+            mpd_base += '/'
+
+    # ── Media duration (for fallback segment count) ─────────────────────────
+    media_dur_str = root.get('mediaPresentationDuration', '')
+    media_duration = _parse_iso8601_duration(media_dur_str) if media_dur_str else 0
+
+    # ── Parse representations ───────────────────────────────────────────────
+    video_reps = []
+    audio_reps = []
+
+    for period in _findall(root, 'Period'):
+        if not media_duration:
+            pd = period.get('duration', '')
+            if pd:
+                media_duration = _parse_iso8601_duration(pd)
+
+        p_base = mpd_base
+        pb = _find(period, 'BaseURL')
+        if pb is not None and pb.text:
+            p_base = _resolve(mpd_base, pb.text.strip())
+            if not p_base.endswith('/'):
+                p_base += '/'
+
+        for aset in _findall(period, 'AdaptationSet'):
+            ct = (aset.get('contentType', '') + aset.get('mimeType', '')).lower()
+            is_video = 'video' in ct
+            is_audio = 'audio' in ct
+
+            a_base = p_base
+            ab = _find(aset, 'BaseURL')
+            if ab is not None and ab.text:
+                a_base = _resolve(p_base, ab.text.strip())
+                if not a_base.endswith('/'):
+                    a_base += '/'
+
+            # SegmentTemplate at AdaptationSet level (shared by all Representations)
+            as_tmpl = _find(aset, 'SegmentTemplate')
+
+            for rep in _findall(aset, 'Representation'):
+                rep_info = {
+                    'id': rep.get('id', ''),
+                    'bandwidth': int(rep.get('bandwidth', '0')),
+                    'width': int(rep.get('width', '0')),
+                    'height': int(rep.get('height', '0')),
+                    'base_url': a_base,
+                    'init_url': None,
+                    'segment_urls': [],
+                }
+
+                rb = _find(rep, 'BaseURL')
+                if rb is not None and rb.text:
+                    rep_info['base_url'] = _resolve(a_base, rb.text.strip())
+                    if not rep_info['base_url'].endswith('/'):
+                        rep_info['base_url'] += '/'
+
+                tmpl = _find(rep, 'SegmentTemplate') or as_tmpl
+
+                if tmpl is not None:
+                    media_t = tmpl.get('media', '')
+                    init_t = tmpl.get('initialization', '')
+                    start_n = int(tmpl.get('startNumber', '1'))
+                    timescale = int(tmpl.get('timescale', '1'))
+                    seg_dur = int(tmpl.get('duration', '0'))
+
+                    def _fill(template, number=None, bw=None):
+                        t = template
+                        if number is not None:
+                            t = t.replace('$Number$', str(number))
+                            t = re.sub(r'\$Number%\d+d\$', str(number), t)
+                        if bw is not None:
+                            t = t.replace('$Bandwidth$', str(bw))
+                        return _resolve(rep_info['base_url'], t)
+
+                    if init_t:
+                        rep_info['init_url'] = _fill(init_t, bw=rep_info['bandwidth'])
+
+                    timeline = _find(tmpl, 'SegmentTimeline')
+                    if timeline is not None:
+                        seg_num = start_n
+                        for s in _findall(timeline, 'S'):
+                            d = int(s.get('d', '0'))
+                            r = int(s.get('r', '0'))
+                            rep_info['segment_urls'].append(
+                                _fill(media_t, number=seg_num, bw=rep_info['bandwidth'])
+                            )
+                            seg_num += 1
+                            for _ in range(r):
+                                rep_info['segment_urls'].append(
+                                    _fill(media_t, number=seg_num, bw=rep_info['bandwidth'])
+                                )
+                                seg_num += 1
+                    elif seg_dur > 0 and media_duration > 0:
+                        num_segs = int(media_duration * timescale / seg_dur)
+                        for n in range(start_n, start_n + num_segs):
+                            rep_info['segment_urls'].append(
+                                _fill(media_t, number=n, bw=rep_info['bandwidth'])
+                            )
+                else:
+                    slist = _find(rep, 'SegmentList')
+                    if slist is not None:
+                        init_el = _find(slist, 'Initialization')
+                        if init_el is not None:
+                            rep_info['init_url'] = _resolve(
+                                rep_info['base_url'], init_el.get('sourceURL', '')
+                            )
+                        for su in _findall(slist, 'SegmentURL'):
+                            mu = su.get('media', '')
+                            if mu:
+                                rep_info['segment_urls'].append(
+                                    _resolve(rep_info['base_url'], mu)
+                                )
+
+                if is_video:
+                    video_reps.append(rep_info)
+                elif is_audio:
+                    audio_reps.append(rep_info)
+
+    # ── Quality selection ───────────────────────────────────────────────────
+    max_h = int(quality)
+    sel_video = None
+    for v in sorted(video_reps, key=lambda x: x['height'], reverse=True):
+        if v['height'] <= max_h:
+            sel_video = v
+            break
+    if sel_video is None and video_reps:
+        sel_video = min(video_reps, key=lambda x: abs(x['height'] - max_h))
+
+    sel_audio = audio_reps[0] if audio_reps else None
+
+    print(f"[CW_DASH] Parsed: {len(video_reps)} video, {len(audio_reps)} audio reps")
+    for v in video_reps:
+        print(f"[CW_DASH]   Video {v['width']}x{v['height']} bw={v['bandwidth']} segs={len(v['segment_urls'])}")
+    for a in audio_reps:
+        print(f"[CW_DASH]   Audio bw={a['bandwidth']} segs={len(a['segment_urls'])}")
+    if sel_video:
+        print(f"[CW_DASH] Selected video: {sel_video['width']}x{sel_video['height']} ({len(sel_video['segment_urls'])} segments)")
+
+    if not sel_video:
+        raise Exception("No video representation found in MPD manifest")
+
+    return {'video': sel_video, 'audio': sel_audio, 'session': session}
+
+
+async def _download_dash_segments(rep_info, label, session, output_dir):
+    """Download init + all media segments, concatenate into one fragmented MP4."""
+    out_file = output_dir / f"{label}.fragmented.mp4"
+
+    if rep_info['init_url']:
+        print(f"[CW_DASH] Downloading {label} init segment...")
+        resp = session.get(rep_info['init_url'], timeout=120)
+        if resp.status_code != 200:
+            raise Exception(f"Failed to download {label} init segment: HTTP {resp.status_code}")
+        with open(out_file, 'wb') as f:
+            f.write(resp.content)
+
+    total = len(rep_info['segment_urls'])
+    for idx, seg_url in enumerate(rep_info['segment_urls']):
+        if idx % 100 == 0:
+            print(f"[CW_DASH] {label} segment {idx+1}/{total}...")
+        try:
+            resp = session.get(seg_url, timeout=120)
+            if resp.status_code != 200:
+                raise Exception(f"{label} segment {idx+1} failed: HTTP {resp.status_code}")
+            with open(out_file, 'ab') as f:
+                f.write(resp.content)
+        except Exception as e:
+            # Retry once
+            print(f"[CW_DASH] Retrying {label} segment {idx+1}: {e}")
+            await asyncio.sleep(2)
+            resp = session.get(seg_url, timeout=120)
+            if resp.status_code != 200:
+                raise Exception(f"{label} segment {idx+1} failed after retry: HTTP {resp.status_code}")
+            with open(out_file, 'ab') as f:
+                f.write(resp.content)
+
+    size = os.path.getsize(out_file)
+    print(f"[CW_DASH] {label} done: {size} bytes ({total} segments)")
+    return str(out_file)
+
+
+async def download_careerwill_drm(mpd_url, kid, key, output_path, output_name, quality="720"):
+    """
+    CareerWill DRM DASH downloader — no yt-dlp.
+    Parses MPD → downloads segments with requests → mp4decrypt → ffmpeg merge.
+
+    Args:
+        mpd_url:   DASH MPD manifest URL (without the *kid:key suffix)
+        kid:       Key ID hex string
+        key:       Decryption key hex string
+        output_path: Directory for temp files
+        output_name: Output filename without extension
+        quality:   Max height (e.g. "720")
+    Returns:
+        Path to final .mp4 file
+    """
+    output_path = Path(output_path)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    # 1. Parse MPD
+    print(f"[CW_DRM] Parsing MPD: {mpd_url}")
+    parsed = _parse_dash_mpd(mpd_url, quality)
+    video_rep = parsed['video']
+    audio_rep = parsed['audio']
+    session = parsed['session']
+
+    # 2. Download segments
+    print("[CW_DRM] Downloading video segments...")
+    video_frag = await _download_dash_segments(video_rep, "video", session, output_path)
+
+    audio_frag = None
+    if audio_rep:
+        print("[CW_DRM] Downloading audio segments...")
+        audio_frag = await _download_dash_segments(audio_rep, "audio", session, output_path)
+
+    session.close()
+
+    # 3. Decrypt with mp4decrypt
+    print("[CW_DRM] Decrypting with ClearKey...")
+    kid_key_arg = f"--key {kid}:{key}"
+
+    video_dec = f"{output_path}/video_decrypted.mp4"
+    p = await asyncio.create_subprocess_shell(
+        f'mp4decrypt {kid_key_arg} --show-progress "{video_frag}" "{video_dec}"',
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+    )
+    stdout, stderr = await p.communicate()
+    if p.returncode != 0 or not os.path.exists(video_dec):
+        print(f"[CW_DRM] mp4decrypt video error: {stderr.decode()}")
+        raise Exception(f"mp4decrypt video decryption failed")
+
+    audio_dec = None
+    if audio_frag:
+        audio_dec = f"{output_path}/audio_decrypted.m4a"
+        p = await asyncio.create_subprocess_shell(
+            f'mp4decrypt {kid_key_arg} --show-progress "{audio_frag}" "{audio_dec}"',
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await p.communicate()
+        if p.returncode != 0 or not os.path.exists(audio_dec):
+            print(f"[CW_DRM] mp4decrypt audio error: {stderr.decode()}")
+            raise Exception(f"mp4decrypt audio decryption failed")
+
+    # 4. Merge with ffmpeg
+    print("[CW_DRM] Merging with ffmpeg...")
+    output_file = str(output_path / f"{output_name}.mp4")
+
+    if audio_dec:
+        cmd = f'ffmpeg -y -i "{video_dec}" -i "{audio_dec}" -c copy "{output_file}"'
+    else:
+        cmd = f'ffmpeg -y -i "{video_dec}" -c copy "{output_file}"'
+
+    p = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    stdout, stderr = await p.communicate()
+    if p.returncode != 0 or not os.path.exists(output_file):
+        print(f"[CW_DRM] ffmpeg error: {stderr.decode()[-500:]}")
+        raise Exception("ffmpeg merge failed")
+
+    # 5. Cleanup temp files
+    for f in [video_frag, video_dec, audio_frag, audio_dec]:
+        if f and os.path.exists(f):
+            try:
+                os.remove(f)
+            except Exception:
+                pass
+
+    print(f"[CW_DRM] Done! {output_file} ({os.path.getsize(output_file)} bytes)")
+    return output_file
