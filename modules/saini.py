@@ -33,8 +33,7 @@ last_download_error = ""
 # ── Download speed constants ──────────────────────────────────────────────────
 # Shared aria2c args used in every yt-dlp download command
 _ARIA2C_ARGS = (
-    'aria2c:'
-    '-x 16 '                       # 16 connections per server (max)
+    'aria2c:-x 16 '                 # 16 connections per server (max)
     '-s 16 '                       # 16 splits per file (max)
     '-j 16 '                       # 16 parallel fragment downloads (max)
     '--min-split-size=1M '         # minimum valid value for aria2c
@@ -43,7 +42,7 @@ _ARIA2C_ARGS = (
     '--enable-http-pipelining=true '
     '--http-accept-gzip=true '
     '--max-tries=0 '
-    '--retry-wait=1'               # retry faster
+    '--retry-wait=1'
 )
 _YTDLP_EXTRA = (
     '-R 0 '                        # infinite retries
@@ -56,9 +55,8 @@ _YTDLP_EXTRA = (
     '--progress '                  # always show progress
     '--newline '                   # one line per progress update (console-friendly)
     '--no-part '
-    '--remote-components ejs:github '
     '--external-downloader aria2c '
-    f'--downloader-args "{_ARIA2C_ARGS}"'
+    f'--downloader-args {_ARIA2C_ARGS}'
 )
 
 
@@ -317,7 +315,6 @@ def time_name():
 
 
 async def download_video(url, cmd, name):
-    # Cookies removed — YouTube uses player_client bypass, no login needed
     download_cmd = f'{cmd} {_YTDLP_EXTRA}'
     global failed_counter, last_download_error
     last_download_error = ""
@@ -325,14 +322,17 @@ async def download_video(url, cmd, name):
     logging.info(download_cmd)
     _proc = await asyncio.create_subprocess_shell(
         download_cmd,
-        stdout=None,   # stream directly to Render/console
-        stderr=None,   # stream directly to Render/console
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
-    await _proc.wait()
+    stdout, stderr = await _proc.communicate()
     k = _proc
     if k.returncode != 0:
         last_download_error = f"yt-dlp exited with code {k.returncode}"
+        if stderr:
+            last_download_error += f"\n{stderr.decode('utf-8', errors='replace')[-500:]}"
         print(f"[DOWNLOAD] Failed with code {k.returncode} for: {name}")
+        print(f"[DOWNLOAD] stderr: {stderr.decode('utf-8', errors='replace')[-500:]}")
     else:
         print(f"[DOWNLOAD] Done: {name}")
     if "visionias" in cmd and k.returncode != 0 and failed_counter <= 10:
