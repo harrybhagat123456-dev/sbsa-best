@@ -36,13 +36,13 @@ if _YT_PROXY:
 else:
     print("[YT_DL] No proxy configured (set PROXY_URL env var for YouTube downloads on cloud servers)")
 
-# ── YouTube player_client strategies for bot detection bypass ────────────
-# YouTube now requires PO Token for most clients. Order matters: try least-restrictive first.
-# mweb: only needs PO Token for GVS (auto-handled by bgutil-ytdlp-pot-provider plugin)
-# tv_simply: no PO Token needed (limited formats, no account cookies)
+# ── YouTube player_client strategies (NO COOKIES mode) ────────────────────
+# Order matters: try clients that work WITHOUT login/cookies first.
+# tv_simply: best for no-login — no PO Token needed, works on server IPs
+# mweb: needs PO Token for GVS (handled by bgutil-ytdlp-pot-provider)
 # web_embedded: no PO Token (only embeddable videos)
 # default: fallback
-_YT_PLAYER_CLIENTS = ['mweb', 'tv_simply', 'web_embedded', 'default']
+_YT_PLAYER_CLIENTS = ['tv_simply', 'mweb', 'web_embedded', 'default']
 
 # ── Download speed constants ──────────────────────────────────────────────────
 # Shared aria2c args used in every yt-dlp download command
@@ -331,10 +331,7 @@ def time_name():
 
 
 async def download_video(url, cmd, name):
-    _cookies = _resolve_cookies_path()
-    if _cookies and ("youtube.com" in url or "youtu.be" in url):
-        if "--cookies" not in cmd:
-            cmd = cmd.replace("yt-dlp ", f'yt-dlp --cookies "{_cookies}" ', 1)
+    # Cookies removed — YouTube uses player_client bypass, no login needed
     download_cmd = f'{cmd} {_YTDLP_EXTRA}'
     global failed_counter, last_download_error
     last_download_error = ""
@@ -801,30 +798,11 @@ async def download_careerwill_drm(mpd_url, kid, key, output_path, output_name, q
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Custom YouTube Downloader (yt_dlp Python API, no subprocess)
-# Proper cookie handling, real error messages, multiple format fallbacks
+# NO COOKIES — uses player_client strategies + Invidious fallback
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _resolve_cookies_path():
-    """Find the YouTube cookies file by checking common locations."""
-    _script_dir = os.path.dirname(os.path.abspath(__file__))
-    _candidates = [
-        os.path.join(_script_dir, "youtube_cookies.txt"),
-        os.path.join(_script_dir, "downloads", "www.youtube.com_cookies.txt"),
-        os.path.join(os.getcwd(), "youtube_cookies.txt"),
-        os.path.join(os.getcwd(), "modules", "youtube_cookies.txt"),
-    ]
-    # Also try env var
-    _env_cookie = os.environ.get("cookies_file_path", "")
-    if _env_cookie:
-        _candidates.insert(0, _env_cookie)
-        _candidates.insert(0, os.path.abspath(_env_cookie))
-
-    for c in _candidates:
-        if os.path.isfile(c):
-            print(f"[YT_COOKIES] Found cookies at: {c}")
-            return os.path.abspath(c)
-
-    print("[YT_COOKIES] WARNING: No cookies file found in any known location")
+    """Cookies are no longer used for YouTube downloads — returns None."""
     return None
 
 
@@ -905,7 +883,8 @@ def _pick_best_format_id(info):
 async def download_youtube_video(url, output_name, quality=None, cookies_path=None):
     """
     Custom YouTube downloader using yt_dlp Python API directly.
-    No subprocess — proper cookie handling, real error messages, multiple fallbacks.
+    No cookies — uses player_client strategies (tv_simply, mweb) to bypass bot detection.
+    Falls back to Invidious if yt-dlp fails.
 
     Always downloads the BEST available quality (ignores user quality setting).
     First extracts available formats, picks the best, then downloads.
@@ -914,7 +893,7 @@ async def download_youtube_video(url, output_name, quality=None, cookies_path=No
         url:          YouTube URL
         output_name:  Output filename prefix (without extension)
         quality:      Ignored — always downloads best available (kept for API compat)
-        cookies_path: Optional explicit cookies file path
+        cookies_path: Ignored (kept for API compat — cookies no longer used)
 
     Returns:
         Path to downloaded file (str), or raises Exception with real error message.
@@ -922,15 +901,13 @@ async def download_youtube_video(url, output_name, quality=None, cookies_path=No
     global last_download_error
     last_download_error = ""
 
-    # ── Resolve cookies ────────────────────────────────────────────────────
-    if not cookies_path or not os.path.isfile(cookies_path):
-        cookies_path = _resolve_cookies_path()
-
     # ── YouTube always uses BEST available quality ─────────────────────────
     print(f"[YT_DL] Quality param '{quality}' ignored — downloading best available")
     print(f"[YT_DL] URL: {url}")
+    print(f"[YT_DL] Mode: NO COOKIES — using player_client bypass")
 
     # ── Build base yt-dlp options (shared across all attempts) ─────────────
+    # NO cookiefile — we don't use cookies anymore
     def _build_opts(fmt, dl_opts=None):
         opts = {
             'format': fmt,
@@ -946,7 +923,7 @@ async def download_youtube_video(url, output_name, quality=None, cookies_path=No
             'no_part': True,
             'merge_output_format': 'mp4',
             'progress_hooks': [],
-            # ── Bot detection bypass: use mweb/tv_simply player_client ──
+            # ── Bot detection bypass: tv_simply works WITHOUT login/cookies ──
             'extractor_args': {
                 'youtube': {
                     'player_client': _YT_PLAYER_CLIENTS,
@@ -956,8 +933,6 @@ async def download_youtube_video(url, output_name, quality=None, cookies_path=No
         }
         if dl_opts:
             opts.update(dl_opts)
-        if cookies_path and os.path.isfile(cookies_path):
-            opts['cookiefile'] = os.path.abspath(cookies_path)
         # ── Proxy for bypassing YouTube bot detection on cloud servers ──
         if _YT_PROXY:
             opts['proxy'] = _YT_PROXY
@@ -1050,21 +1025,10 @@ async def download_youtube_video(url, output_name, quality=None, cookies_path=No
     # ── Provide helpful error message ────────────────────────────────────
     _hint = ""
     if 'not a bot' in last_err.lower() or 'sign in' in last_err.lower():
-        if not _YT_PROXY:
-            _hint = (
-                "\n\n💡 YouTube is blocking this server's IP for this video. "
-                "Set PROXY_URL env var in Heroku to fix all YouTube downloads."
-            )
-        elif not (cookies_path and os.path.isfile(cookies_path)):
-            _hint = (
-                "\n\n💡 YouTube requires login cookies. "
-                "Use /cookies command to upload cookies file."
-            )
-        else:
-            _hint = (
-                "\n\n💡 Cookies may be expired or from a different IP. "
-                "Re-export cookies from your browser and upload with /cookies."
-            )
+        _hint = (
+            "\n\n💡 YouTube blocked this video on this server. "
+            "Invidious fallback will be tried automatically."
+        )
     raise Exception(f"YouTube download failed: {last_err}{_hint}")
 
 

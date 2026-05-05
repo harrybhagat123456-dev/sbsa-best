@@ -40,7 +40,7 @@ except ImportError as e:
     _HISTORY_ENABLED = False
     print(f"[DRM Handler] History module not available: {e}")
 from utils import progress_bar, safe_listen as _base_safe_listen, describe_message
-from vars import API_ID, API_HASH, BOT_TOKEN, OWNER, CREDIT, AUTH_USERS, TOTAL_USERS, cookies_file_path
+from vars import API_ID, API_HASH, BOT_TOKEN, OWNER, CREDIT, AUTH_USERS, TOTAL_USERS
 from vars import api_url, api_token, token_cp, adda_token, photologo, photoyt, photocp, photozip
 from aiohttp import ClientSession
 from subprocess import getstatusoutput
@@ -1649,7 +1649,7 @@ async def _drm_handler_impl(bot: Client, m: Message):
             elif "webvideos.classplusapp." in url:
                cmd = f'yt-dlp --add-header "referer:https://web.classplusapp.com/" --add-header "x-cdn-tag:empty" -f "{ytf}" "{url}" -o "{name}.mp4"'
             elif "youtube.com" in url or "youtu.be" in url:
-                cmd = f'yt-dlp --cookies youtube_cookies.txt -f "{ytf}" "{url}" -o "{name}".mp4'
+                cmd = f'yt-dlp -f "{ytf}" "{url}" -o "{name}".mp4'
             else:
                 cmd = f'yt-dlp -f "{ytf}" "{url}" -o "{name}.mp4"'
 
@@ -2080,8 +2080,8 @@ async def _drm_handler_impl(bot: Client, m: Message):
                     _yt_err_msg = None
                     _yt_fallback_used = False
                     try:
-                        # YouTube always downloads best available quality
-                        res_file = await helper.download_youtube_video(url, name, quality="best", cookies_path=cookies_file_path)
+                        # YouTube always downloads best available quality (no cookies)
+                        res_file = await helper.download_youtube_video(url, name, quality="best")
                     except Exception as _yt_err:
                         _yt_err_msg = str(_yt_err)
                         _yt_err_lower = _yt_err_msg.lower()
@@ -2104,7 +2104,7 @@ async def _drm_handler_impl(bot: Client, m: Message):
                     await prog1.delete(True)
                     await prog.delete(True)
                     if not filename or not os.path.isfile(filename):
-                        _dl_error = _yt_err_msg or getattr(helper, 'last_download_error', '') or 'YouTube download failed. Check if video is available, cookies are valid, or link is private/restricted.'
+                        _dl_error = _yt_err_msg or getattr(helper, 'last_download_error', '') or 'YouTube download failed. The video may be private, restricted, or blocked in this server region.'
                         await bot.send_message(channel_id, f'⚠️**Downloading Failed**⚠️\n**Name** =>> `{str(count).zfill(3)} {name1}`\n**Url** =>> {url}\n\n<blockquote expandable><i><b>Failed Reason: {_dl_error}</b></i></blockquote>', disable_web_page_preview=True)
                         failed_links.append(f"{name1} : {link0}")
                         count += 1
@@ -2145,7 +2145,7 @@ async def _drm_handler_impl(bot: Client, m: Message):
                     await prog1.delete(True)
                     await prog.delete(True)
                     if not filename or not os.path.isfile(filename):
-                        _dl_error = getattr(helper, "last_download_error", "") or "File not downloaded. Check if the YouTube video is available, cookies are valid, or the link is private/restricted."
+                        _dl_error = getattr(helper, "last_download_error", "") or "File not downloaded. The YouTube video may be private, restricted, or blocked in this server region."
                         await bot.send_message(channel_id, f'⚠️**Downloading Failed**⚠️\n**Name** =>> `{str(count).zfill(3)} {name1}`\n**Url** =>> {url}\n\n<blockquote expandable><i><b>Failed Reason: {_dl_error}</b></i></blockquote>', disable_web_page_preview=True)
                         failed_links.append(f"{name1} : {link0}")
                         count += 1
