@@ -1213,6 +1213,7 @@ async def _drm_handler_impl(bot: Client, m: Message):
                 Vxy = f"www.youtube.com/watch?v={_vid}"
             url = "https://" + Vxy
             link0 = "https://" + Vxy
+            cw_keys_string = ""  # Reset per-iteration for CareerWill DRM DASH
 
             _raw_name = links[i][0]
 
@@ -1338,6 +1339,12 @@ async def _drm_handler_impl(bot: Client, m: Message):
             elif 'encrypted.m' in url:
                 appxkey = url.split('*')[1]
                 url = url.split('*')[0]
+
+            elif '*' in url and '.mpd' in url.split('*')[0]:
+                # CareerWill DRM DASH with ClearKey: mpd_url*kid:key
+                _cw_parts = url.split('*', 1)
+                url = _cw_parts[0].strip()
+                cw_keys_string = f"--key {_cw_parts[1].strip()}"
 
             if "youtu" in url:
                 ytf = f"bv*[height<={raw_text2}][ext=mp4]+ba[ext=m4a]/b[height<=?{raw_text2}]"
@@ -1702,7 +1709,50 @@ async def _drm_handler_impl(bot: Client, m: Message):
                     count += 1
                     await asyncio.sleep(UPLOAD_DELAY)
                     continue
- 
+
+                elif cw_keys_string:
+                    # CareerWill DRM DASH - ClearKey decryption (mpd_url*kid:key format)
+                    remaining_links = len(links) - count
+                    progress = (count / len(links)) * 100
+                    Show1 = f"<blockquote>🚀𝐏𝐫𝐨𝐠𝐫𝐞𝐬𝐬 » {progress:.2f}%</blockquote>\n┃\n" \
+                           f"┣🔗𝐈𝐧𝐝ᴇx » {count}/{len(links)}\n┃\n" \
+                           f"╰━🖇️𝐑ᴇᴍᴀɪɴ » {remaining_links}\n" \
+                           f"━━━━━━━━━━━━━━━━━━━━━━━━\n" \
+                           f"<blockquote><b>⚡CareerWill DRM Downloading...⏳</b></blockquote>\n┃\n" \
+                           f'┣💃𝐂𝐫ᴇᴅɪᴛ » {CR}\n┃\n' \
+                           f"╰━📚𝐁ᴀᴛᴄʜ » {b_name}\n" \
+                           f"{_topic_part}" \
+                           f"━━━━━━━━━━━━━━━━━━━━━━━━━\n" \
+                           f"<blockquote>📚𝐓ɪᴛʟᴇ » {namef}</blockquote>\n┃\n" \
+                           f"┣🍁𝐐ᴜᴀʟɪᴛʏ » {quality}\n┃\n" \
+                           f'╰━━━━━━━━━━━━━━━━━━━━━━━━━\n' \
+                           f"🛑**Send** /stop **to stop process**\n┃\n" \
+                           f"╰━✦𝐁ᐨ𝐭 𝐌𝐚𝐝𝐞 𝐁𝐲 ✦ {CREDIT}"
+                    Show = f"<i><b>🛡️ CareerWill DRM Video Downloading</b></i>\n<blockquote><b>{str(count).zfill(3)}) {name1}</b></blockquote>"
+                    prog = await bot.send_message(channel_id, Show, disable_web_page_preview=True)
+                    prog1 = await m.reply_text(Show1, disable_web_page_preview=True)
+                    try:
+                        _cw_path = path
+                    except NameError:
+                        _cw_path = f"./downloads/{m.chat.id}"
+                    res_file = await helper.decrypt_and_merge_video(url, cw_keys_string, _cw_path, name, raw_text2)
+                    filename = res_file
+                    await prog1.delete(True)
+                    await prog.delete(True)
+                    if not filename or not os.path.isfile(filename):
+                        await bot.send_message(channel_id, f'⚠️**Downloading Failed**⚠️\n**Name** =>> `{str(count).zfill(3)} {name1}`\n**Url** =>> {url}\n\n<blockquote expandable><i><b>Failed Reason: File not downloaded. Check if CloudFront segments are accessible or ClearKey is valid.</b></i></blockquote>', disable_web_page_preview=True)
+                        failed_links.append(f"{name1} : {link0}")
+                        count += 1
+                        failed_count += 1
+                        continue
+                    _sent = await helper.send_vid(bot, m, cc, filename, vidwatermark, thumb, name, prog, channel_id, topic_id=_link_topic_id)
+                    if _sent:
+                        _chap = link_chapters[i] if i < len(link_chapters) else ""
+                        await _pin_heading(_chap, f'{str(count).zfill(3)} {name1}', _sent.id, topic_id=_link_topic_id)
+                    count += 1
+                    await asyncio.sleep(UPLOAD_DELAY)
+                    continue
+
                 else:
                     remaining_links = len(links) - count
                     progress = (count / len(links)) * 100
