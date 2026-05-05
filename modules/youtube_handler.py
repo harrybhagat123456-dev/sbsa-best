@@ -96,26 +96,6 @@ def _has_auth_cookie(pairs: dict):
 # Cookies handlers
 # ---------------------------------------------------------------------------
 
-async def cookies_handler(client: Client, m: Message):
-    user_id = m.from_user.id
-    editable = await m.reply_text("**Please upload the YouTube Cookies file (.txt format).**")
-    try:
-        input_message: Message = await safe_listen(client, m.chat.id, user_id, timeout=60)
-        if not input_message.document or not input_message.document.file_name.endswith(".txt"):
-            await m.reply_text("Invalid file type. Please upload a .txt file.")
-            return
-        downloaded_path = await input_message.download()
-        with open(downloaded_path, "r") as uploaded_file:
-            cookies_content = uploaded_file.read()
-        with open(cookies_file_path, "w") as target_file:
-            target_file.write(cookies_content)
-        await editable.delete()
-        await input_message.delete()
-        await m.reply_text("✅ Cookies updated successfully.\n📂 Saved in `youtube_cookies.txt`.")
-    except Exception as e:
-        await m.reply_text(f"__**Failed Reason**__\n<blockquote>{str(e)}</blockquote>")
-
-
 async def getcookies_handler(client: Client, m: Message):
     try:
         await client.send_document(chat_id=m.chat.id, document=cookies_file_path,
@@ -692,7 +672,6 @@ async def y2t_handler(bot: Client, message: Message):
 # ---------------------------------------------------------------------------
 
 def register_youtube_handlers(bot):
-    bot.on_message(filters.command("cookies") & filters.private)(cookies_handler)
     bot.on_message(filters.command("getcookies") & filters.private)(getcookies_handler)
     bot.on_message(filters.command(["ytcookies", "ytcookie"]) & filters.private)(ytcookies_handler)
     bot.on_message(filters.command(["ytm"]))(ytm_handler)

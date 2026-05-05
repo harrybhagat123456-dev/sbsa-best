@@ -24,7 +24,7 @@ import globals
 from authorisation import add_auth_user, list_auth_users, remove_auth_user
 from broadcast import broadcast_handler, broadusers_handler
 from text_handler import text_to_txt
-from youtube_handler import ytm_handler, y2t_handler, getcookies_handler, cookies_handler
+from youtube_handler import ytm_handler, y2t_handler, getcookies_handler
 
 try:
     from download_history import (
