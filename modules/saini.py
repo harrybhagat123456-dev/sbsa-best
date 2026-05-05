@@ -899,8 +899,16 @@ async def download_youtube_video(url, output_name, quality="720", cookies_path=N
                 loop = asyncio.get_event_loop()
                 info = await loop.run_in_executor(None, _yt_dlp_extract, ydl_opts, url)
 
-                # Find the downloaded file
-                dl_file = _find_downloaded_media(output_name)
+                # Find the downloaded file — prefer yt_dlp's own reported path
+                dl_file = None
+                if info and 'requested_downloads' in info:
+                    for dl_entry in info['requested_downloads']:
+                        _fpath = dl_entry.get('filepath') or dl_entry.get('filename')
+                        if _fpath and os.path.isfile(_fpath) and os.path.getsize(_fpath) > 0:
+                            dl_file = _fpath
+                            break
+                if not dl_file:
+                    dl_file = _find_downloaded_media(output_name)
                 if dl_file and os.path.isfile(dl_file) and os.path.getsize(dl_file) > 0:
                     size = os.path.getsize(dl_file)
                     print(f"[YT_DL] SUCCESS: {dl_file} ({size} bytes)")

@@ -1875,17 +1875,19 @@ async def _drm_handler_impl(bot: Client, m: Message):
                     Show = f"<i><b>🎬 YouTube Video Downloading</b></i>\n<blockquote><b>{str(count).zfill(3)}) {name1}</b></blockquote>"
                     prog = await bot.send_message(channel_id, Show, disable_web_page_preview=True)
                     prog1 = await m.reply_text(Show1, disable_web_page_preview=True)
+                    _yt_err_msg = None
                     try:
                         _yt_quality = raw_text2 if raw_text2 and raw_text2.isdigit() else "720"
-                        res_file = await helper.download_youtube_video(url, name, _yt_quality)
+                        res_file = await helper.download_youtube_video(url, name, _yt_quality, cookies_path=cookies_file_path)
                     except Exception as _yt_err:
-                        print(f"[YT_HANDLER] Error: {_yt_err}")
+                        _yt_err_msg = str(_yt_err)
+                        print(f"[YT_HANDLER] Error: {_yt_err_msg}")
                         res_file = None
                     filename = res_file
                     await prog1.delete(True)
                     await prog.delete(True)
                     if not filename or not os.path.isfile(filename):
-                        _dl_error = getattr(helper, "last_download_error", "") or str(_yt_err) if '_yt_err' in dir() else "YouTube download failed. Check if video is available, cookies are valid, or link is private/restricted."
+                        _dl_error = _yt_err_msg or getattr(helper, 'last_download_error', '') or 'YouTube download failed. Check if video is available, cookies are valid, or link is private/restricted.'
                         await bot.send_message(channel_id, f'⚠️**Downloading Failed**⚠️\n**Name** =>> `{str(count).zfill(3)} {name1}`\n**Url** =>> {url}\n\n<blockquote expandable><i><b>Failed Reason: {_dl_error}</b></i></blockquote>', disable_web_page_preview=True)
                         failed_links.append(f"{name1} : {link0}")
                         count += 1
