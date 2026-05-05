@@ -1638,7 +1638,7 @@ async def _drm_handler_impl(bot: Client, m: Message):
                 cw_keys_string = f"{cw_kid}:{cw_key}"  # Mark as CareerWill DRM
 
             if "youtu" in url:
-                ytf = f"bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b"
+                ytf = "bestvideo+bestaudio/best"
             elif "embed" in url:
                 ytf = f"bestvideo[height<={raw_text2}]+bestaudio/best[height<={raw_text2}]"
             else:
