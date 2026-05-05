@@ -637,7 +637,7 @@ async def y2t_handler(bot: Client, message: Message):
     ydl_opts = {
         'quiet': True, 'extract_flat': True, 'skip_download': True,
         'force_generic_extractor': True, 'forcejson': True,
-        'cookies': 'youtube_cookies.txt'
+        'cookies': cookies_file_path
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
