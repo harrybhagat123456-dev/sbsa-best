@@ -1334,7 +1334,7 @@ async def _drm_handler_impl(bot: Client, m: Message):
                 url = url.split("bcov_auth")[0]+bcov
 
             elif "childId" in url and "parentId" in url and "anonymouspwplayer" not in url:
-                url = f"https://anonymouspwplayer-907e62cf4891.herokuapp.com/pw?url={url}&token={pwtoken}"
+                url = f"https://anonymouspwplayerr-3cfbfedeb317.herokuapp.com/pw?url={}&token={pwtoken}"
                         
             elif 'encrypted.m' in url:
                 appxkey = url.split('*')[1]
