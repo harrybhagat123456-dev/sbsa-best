@@ -27,6 +27,15 @@ import yt_dlp
 
 last_download_error = ""
 
+# ── Proxy support for YouTube bot detection bypass ────────────────────────
+# Set PROXY_URL env var to use a proxy (e.g., socks5://user:pass@host:port)
+# Required for Heroku/cloud servers since YouTube blocks datacenter IPs.
+_YT_PROXY = os.environ.get('PROXY_URL', '').strip() or None
+if _YT_PROXY:
+    print(f"[YT_DL] Proxy enabled: {_YT_PROXY}")
+else:
+    print("[YT_DL] No proxy configured (set PROXY_URL env var for YouTube downloads on cloud servers)")
+
 # ── YouTube player_client strategies for bot detection bypass ────────────
 # YouTube now requires PO Token for most clients. Order matters: try least-restrictive first.
 # mweb: only needs PO Token for GVS (auto-handled by bgutil-ytdlp-pot-provider plugin)
@@ -949,6 +958,9 @@ async def download_youtube_video(url, output_name, quality=None, cookies_path=No
             opts.update(dl_opts)
         if cookies_path and os.path.isfile(cookies_path):
             opts['cookiefile'] = os.path.abspath(cookies_path)
+        # ── Proxy for bypassing YouTube bot detection on cloud servers ──
+        if _YT_PROXY:
+            opts['proxy'] = _YT_PROXY
         return opts
 
     loop = asyncio.get_event_loop()
@@ -1034,4 +1046,25 @@ async def download_youtube_video(url, output_name, quality=None, cookies_path=No
     # All attempts failed
     last_download_error = f"yt-dlp failed: {last_err}"
     print(f"[YT_DL] ALL ATTEMPTS FAILED: {last_download_error}")
-    raise Exception(f"YouTube download failed: {last_err}")
+
+    # ── Provide helpful error message ────────────────────────────────────
+    _hint = ""
+    if 'not a bot' in last_err.lower() or 'sign in' in last_err.lower():
+        if not _YT_PROXY:
+            _hint = (
+                "\n\n💡 TIP: YouTube is blocking this server's IP. "
+                "Set PROXY_URL env var (e.g., socks5://user:pass@host:port) "
+                "in Heroku Config Vars to use a residential proxy."
+            )
+        elif not (cookies_path and os.path.isfile(cookies_path)):
+            _hint = (
+                "\n\n💡 TIP: YouTube requires login cookies. "
+                "Use /cookies command to upload cookies file."
+            )
+        else:
+            _hint = (
+                "\n\n💡 TIP: Cookies may be expired or from a different IP. "
+                "Re-export cookies from your browser and upload with /cookies. "
+                "Also try refreshing your proxy subscription."
+            )
+    raise Exception(f"YouTube download failed: {last_err}{_hint}")
