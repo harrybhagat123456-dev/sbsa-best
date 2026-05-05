@@ -119,8 +119,11 @@ def _claim_download_message(message):
 
 # ============================================================
 # FORWARD ALL — stores topic message ranges for callback buttons
+# Supports: Forward to Saved Messages, Forward to Custom Chat,
+#           Copy Message Links (for manual sharing anywhere)
 # ============================================================
 _fwd_range_store = {}     # key -> {channel_id, message_ids, topic_name}
+_fwd_pending_chat = {}    # user_id -> fwd_key (waiting for chat input)
 _FWD_MAX_STORE = 200      # keep at most N entries (auto-cleanup)
 
 def _store_fwd_range(channel_id, message_ids, topic_name):
@@ -140,9 +143,37 @@ def _store_fwd_range(channel_id, message_ids, topic_name):
     return key
 
 
+async def _do_forward_messages(client, user_id, from_chat, msg_ids, callback_msg=None):
+    """Core forwarding logic — forwards messages to a target chat."""
+    forwarded = 0
+    failed = 0
+    for mid in msg_ids:
+        try:
+            await client.forward_messages(user_id, from_chat, mid)
+            forwarded += 1
+            await asyncio.sleep(0.3)
+        except FloodWait as e:
+            await asyncio.sleep(e.value + 1)
+            try:
+                await client.forward_messages(user_id, from_chat, mid)
+                forwarded += 1
+            except Exception:
+                failed += 1
+        except Exception as e:
+            print(f"[FwdAll] Failed to forward msg {mid}: {e}")
+            failed += 1
+    return forwarded, failed
+
+
 async def _fwd_all_callback_handler(client, callback):
-    """Handle 'Forward All' inline button clicks — forwards topic messages to user's PM."""
-    from pyrogram.types import InlineKeyboardMarkup
+    """
+    Handle 'Forward All' inline button clicks.
+    Shows a menu in user's PM with forwarding options:
+      1. Forward to Saved Messages (instant)
+      2. Forward to Custom Chat (user picks destination)
+      3. Copy Message Links (share anywhere via Telegram)
+    """
+    from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton as IKB
     key = callback.data
     data = _fwd_range_store.get(key)
     if not data:
@@ -158,35 +189,206 @@ async def _fwd_all_callback_handler(client, callback):
         await callback.answer("No messages to forward.", show_alert=True)
         return
 
-    await callback.answer(f"Forwarding {len(msg_ids)} messages...", show_alert=False)
+    await callback.answer()
 
-    forwarded = 0
-    failed = 0
-    for mid in msg_ids:
-        try:
-            await client.forward_messages(user_id, from_chat, mid)
-            forwarded += 1
-            await asyncio.sleep(0.3)  # small delay to avoid flood
-        except FloodWait as e:
-            await asyncio.sleep(e.value + 1)
-            try:
-                await client.forward_messages(user_id, from_chat, mid)
-                forwarded += 1
-            except Exception:
-                failed += 1
-        except Exception as e:
-            print(f"[FwdAll] Failed to forward msg {mid}: {e}")
-            failed += 1
-
-    # Update the button text to show result
+    # Build the forward options menu and send to user's PM
     try:
-        _result_text = f"✅ Forwarded {forwarded} messages"
+        _opts_text = (
+            f"📋 <b>Forward Options — {topic_name}</b>\n\n"
+            f"<blockquote>Total messages: <b>{len(msg_ids)}</b></blockquote>\n\n"
+            f"Choose a destination below:\n"
+            f"• <b>Saved Messages</b> — instant forward to your Saved Messages\n"
+            f"• <b>Custom Chat</b> — forward to any chat (send chat ID or @username)\n"
+            f"• <b>Copy Links</b> — get all message links to share anywhere"
+        )
+        _buttons = InlineKeyboardMarkup([
+            [IKB("📥 Forward to Saved Messages", callback_data=f"fwd_saved|{key}")],
+            [IKB("🔄 Forward to Custom Chat", callback_data=f"fwd_custom|{key}")],
+            [IKB("📋 Copy Message Links", callback_data=f"fwd_links|{key}")],
+        ])
+        await client.send_message(user_id, _opts_text, reply_markup=_buttons, disable_web_page_preview=True)
+    except Exception as e:
+        print(f"[FwdAll] Failed to send options to user: {e}")
+        # Fallback: forward directly to Saved Messages
+        await callback.answer("Sending to your Saved Messages...", show_alert=True)
+        await _do_forward_messages(client, user_id, from_chat, msg_ids)
+        try:
+            from pyrogram.types import InlineKeyboardMarkup
+            _btn = InlineKeyboardMarkup([[IKB("✅ Done", callback_data="fwd_done")]])
+            await callback.message.edit_reply_markup(reply_markup=_btn)
+        except Exception:
+            pass
+
+
+async def _fwd_action_callback_handler(client, callback):
+    """
+    Handle forward action sub-buttons:
+      fwd_saved|<key>  — forward all to Saved Messages
+      fwd_custom|<key> — prompt user to send chat ID/username
+      fwd_links|<key>  — copy all message permalinks
+    """
+    from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton as IKB
+    parts = callback.data.split("|", 1)
+    if len(parts) != 2:
+        await callback.answer("Invalid callback.", show_alert=True)
+        return
+    action, key = parts
+    data = _fwd_range_store.get(key)
+    if not data:
+        await callback.answer("Forward data expired. Re-upload the batch.", show_alert=True)
+        return
+
+    user_id = callback.from_user.id
+    msg_ids = data["message_ids"]
+    from_chat = data["channel_id"]
+    topic_name = data["topic_name"]
+
+    if action == "fwd_saved":
+        # ── Forward all messages to user's Saved Messages ──
+        await callback.answer(f"Forwarding {len(msg_ids)} messages to Saved Messages...", show_alert=False)
+        # Update button to show "Forwarding..."
+        try:
+            _loading_btn = InlineKeyboardMarkup([
+                [IKB(f"⏳ Forwarding {len(msg_ids)} messages...", callback_data="fwd_busy")],
+            ])
+            await callback.message.edit_reply_markup(reply_markup=_loading_btn)
+        except Exception:
+            pass
+
+        forwarded, failed = await _do_forward_messages(client, user_id, from_chat, msg_ids)
+        _result = f"✅ Forwarded {forwarded} messages to Saved Messages"
         if failed:
-            _result_text += f" ({failed} failed)"
-        _btn = InlineKeyboardMarkup([[InlineKeyboardButton(_result_text, callback_data="fwd_done")]])
-        await callback.message.edit_reply_markup(reply_markup=_btn)
+            _result += f"\n❌ {failed} failed"
+        try:
+            _done_btn = InlineKeyboardMarkup([[IKB("✅ Done", callback_data="fwd_done")]])
+            await callback.message.edit_text(_result, reply_markup=_done_btn, disable_web_page_preview=True)
+        except Exception:
+            pass
+
+    elif action == "fwd_custom":
+        # ── Ask user to provide chat destination ──
+        await callback.answer()
+        global _fwd_pending_chat
+        _fwd_pending_chat[user_id] = key
+        try:
+            _prompt_text = (
+                f"🔄 <b>Forward to Custom Chat</b>\n\n"
+                f"Topic: <b>{topic_name}</b> ({len(msg_ids)} messages)\n\n"
+                f"Send the <b>chat ID</b> or <b>@username</b> of the chat/group/channel where you want to forward all messages.\n\n"
+                f"<i>Examples:</i>\n"
+                f"• <code>@my_channel</code>\n"
+                f"• <code>-1001234567890</code>\n"
+                f"• Forward any message from the target chat to me\n\n"
+                f"Send /cancel to cancel."
+            )
+            await client.send_message(user_id, _prompt_text, disable_web_page_preview=True)
+        except Exception as e:
+            print(f"[FwdAll] Failed to send custom chat prompt: {e}")
+
+    elif action == "fwd_links":
+        # ── Generate all message permalinks ──
+        await callback.answer("Generating message links...", show_alert=False)
+        try:
+            _chat_info = await client.get_chat(from_chat)
+            _username = getattr(_chat_info, 'username', None)
+            _chat_short = str(from_chat)
+            if _chat_short.startswith("-100"):
+                _chat_short = _chat_short[4:]
+            else:
+                _chat_short = _chat_short.lstrip("-")
+
+            _links = []
+            for mid in msg_ids:
+                if _username:
+                    _links.append(f"https://t.me/{_username}/{mid}")
+                else:
+                    _links.append(f"https://t.me/c/{_chat_short}/{mid}")
+
+            _links_text = "\n".join(_links)
+            _header = f"📋 <b>Message Links — {topic_name}</b>\n({len(msg_ids)} messages)\n\n"
+
+            # Send in chunks if too long (Telegram message limit ~4096 chars)
+            _chunk_size = 50
+            for i in range(0, len(_links), _chunk_size):
+                _chunk = _links[i:i + _chunk_size]
+                _chunk_text = _header if i == 0 else ""
+                _chunk_text += "\n".join(_chunk)
+                await client.send_message(user_id, _chunk_text, disable_web_page_preview=True)
+                await asyncio.sleep(0.3)
+
+            # Update the options message
+            _done_btn = InlineKeyboardMarkup([[IKB("✅ Links Sent", callback_data="fwd_done")]])
+            await callback.message.edit_reply_markup(reply_markup=_done_btn)
+        except Exception as e:
+            print(f"[FwdAll] Failed to generate links: {e}")
+            await callback.answer(f"Error: {e}", show_alert=True)
+
+
+async def _fwd_chat_input_handler(client, message):
+    """
+    Handle user's reply with chat ID/username for custom forward destination.
+    Also handles forwarded messages (user forwards a msg from target chat to bot).
+    """
+    global _fwd_pending_chat, _fwd_range_store
+    from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton as IKB
+
+    user_id = message.from_user.id
+    fwd_key = _fwd_pending_chat.pop(user_id, None)
+    if not fwd_key:
+        return  # Not expecting chat input from this user
+
+    data = _fwd_range_store.get(fwd_key)
+    if not data:
+        await message.reply_text("❌ Forward data expired. Please try again from the batch channel.")
+        return
+
+    # ── Determine target chat from user's message ──
+    target_chat = None
+    target_label = ""
+
+    # Case 1: User forwarded a message from the target chat
+    if message.forward_from_chat:
+        target_chat = message.forward_from_chat.id
+        target_label = f"@{message.forward_from_chat.username}" if message.forward_from_chat.username else str(target_chat)
+    elif message.forward_from:
+        # Forwarded from a user — use their user ID
+        target_chat = message.forward_from.id
+        target_label = str(target_chat)
+    # Case 2: User sent a chat ID or @username
+    elif message.text:
+        _text = message.text.strip()
+        if _text.startswith("@"):
+            target_chat = _text  # Pyrogram accepts @username directly
+            target_label = _text
+        elif _text.lstrip("-").isdigit():
+            target_chat = int(_text)
+            target_label = _text
+        else:
+            await message.reply_text("❌ Invalid input. Please send a valid chat ID (e.g., -1001234567890) or @username.\nSend /cancel to cancel.")
+            _fwd_pending_chat[user_id] = fwd_key  # Restore pending state
+            return
+
+    if not target_chat:
+        await message.reply_text("❌ Could not determine target chat. Please forward a message from the target chat or send its ID/@username.\nSend /cancel to cancel.")
+        _fwd_pending_chat[user_id] = fwd_key  # Restore pending state
+        return
+
+    # ── Forward all messages to the target chat ──
+    msg_ids = data["message_ids"]
+    from_chat = data["channel_id"]
+    topic_name = data["topic_name"]
+
+    _status = await message.reply_text(f"⏳ Forwarding {len(msg_ids)} messages to {target_label}...")
+
+    forwarded, failed = await _do_forward_messages(client, target_chat, from_chat, msg_ids)
+
+    _result = f"✅ Forwarded {forwarded} messages to {target_label}"
+    if failed:
+        _result += f"\n❌ {failed} failed"
+    try:
+        await _status.edit_text(_result)
     except Exception:
-        pass
+        await message.reply_text(_result)
 
 
 # ============================================================
@@ -1226,7 +1428,7 @@ async def _drm_handler_impl(bot: Client, m: Message):
             _fwd_text = (
                 f"<b>✅ {chap.upper()} — UPLOAD COMPLETE</b>\n\n"
                 f"<blockquote>📋 <b>FORWARD ALL THIS TOPIC</b>\n"
-                f"Click the button below to forward all messages to your Saved Messages.</blockquote>"
+                f"Click the button below to choose where to forward all messages.</blockquote>"
             )
             _buttons = []
             # Primary: callback button that actually forwards messages
@@ -2361,5 +2563,19 @@ def register_drm_handlers(bot):
     custom_filter = f.create(is_valid_download_message)
     bot.on_message(f.private & custom_filter, group=10)(drm_handler)
 
-    # ── Register "Forward All" callback handler ────────────────────────────
+    # ── Register "Forward All" callback handlers ──────────────────────────
+    # fwd_<digits> — initial menu (in channel, shows options in user PM)
     bot.on_callback_query(f.regex(r"^fwd_\d+$") & f.user(AUTH_USERS), group=5)(_fwd_all_callback_handler)
+    # fwd_saved|<key>, fwd_custom|<key>, fwd_links|<key> — action sub-buttons (in user PM)
+    bot.on_callback_query(f.regex(r"^fwd_(saved|custom|links)\|") & f.user(AUTH_USERS), group=6)(_fwd_action_callback_handler)
+    # fwd_done, fwd_busy — no-op callbacks
+    bot.on_callback_query(f.regex(r"^fwd_(done|busy)$") & f.user(AUTH_USERS), group=7)(lambda c, cb: cb.answer())
+
+    # ── Register "Forward to Custom Chat" text/forward handler ─────────────
+    # This listens in PM for the user's chat ID/@username input
+    async def _fwd_pm_filter(_, __, message):
+        """Only process PM messages from users who have pending forward requests."""
+        if not message.chat or message.chat.id != message.from_user.id:
+            return False  # Not a PM
+        return message.from_user.id in _fwd_pending_chat
+    bot.on_message(f.create(_fwd_pm_filter), group=8)(_fwd_chat_input_handler)

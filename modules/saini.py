@@ -27,6 +27,14 @@ import yt_dlp
 
 last_download_error = ""
 
+# ── YouTube player_client strategies for bot detection bypass ────────────
+# YouTube now requires PO Token for most clients. Order matters: try least-restrictive first.
+# mweb: only needs PO Token for GVS (auto-handled by bgutil-ytdlp-pot-provider plugin)
+# tv_simply: no PO Token needed (limited formats, no account cookies)
+# web_embedded: no PO Token (only embeddable videos)
+# default: fallback
+_YT_PLAYER_CLIENTS = ['mweb', 'tv_simply', 'web_embedded', 'default']
+
 # ── Download speed constants ──────────────────────────────────────────────────
 # Shared aria2c args used in every yt-dlp download command
 _ARIA2C_ARGS = (
@@ -882,7 +890,19 @@ async def download_youtube_video(url, output_name, quality="720", cookies_path=N
                     'noprogress': False,
                     'no_part': True,
                     'merge_output_format': 'mp4',
-                    'progress_hooks': [],  # Could add progress hook later
+                    'progress_hooks': [],
+                    # ── Bot detection bypass: use mweb/tv_simply player_client ──
+                    # This tells yt-dlp to use YouTube's mobile/embedded clients
+                    # which have less strict PO Token requirements.
+                    # Requires bgutil-ytdlp-pot-provider plugin for PO Token auto-generation.
+                    'extractor_args': {
+                        'youtube': {
+                            'player_client': _YT_PLAYER_CLIENTS,
+                        }
+                    },
+                    # ── JS runtime for signature/throttle challenges ──
+                    # Requires Node.js/Deno on the system and yt-dlp-ejs package
+                    'verbose': True,
                 }
                 # Add downloader-specific options
                 ydl_opts.update(dl_opts)
