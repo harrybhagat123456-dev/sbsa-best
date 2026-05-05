@@ -56,7 +56,7 @@ _YTDLP_EXTRA = (
     '--newline '                   # one line per progress update (console-friendly)
     '--no-part '
     '--external-downloader aria2c '
-    f'--downloader-args {_ARIA2C_ARGS}'
+    f'--downloader-args "{_ARIA2C_ARGS}"'
 )
 
 
