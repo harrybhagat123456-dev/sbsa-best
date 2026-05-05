@@ -1649,7 +1649,7 @@ async def _drm_handler_impl(bot: Client, m: Message):
             elif "webvideos.classplusapp." in url:
                cmd = f'yt-dlp --add-header "referer:https://web.classplusapp.com/" --add-header "x-cdn-tag:empty" -f "{ytf}" "{url}" -o "{name}.mp4"'
             elif "youtube.com" in url or "youtu.be" in url:
-                cmd = f'yt-dlp -k --allow-unplayable-formats --geo-bypass --cookies youtube_cookies.txt -f "{ytf}" -S "res~{raw_text2},+size,+br" --fixup never --merge-output-format mp4 "{url}" -o "{name}".mp4'
+                cmd = f'yt-dlp -k --allow-unplayable-formats --geo-bypass --cookies youtube_cookies.txt --extractor-args "youtube:player_client=tv_simply,ios,android_vr" -f "{ytf}" -S "res~{raw_text2},+size,+br" --fixup never --merge-output-format mp4 "{url}" -o "{name}".mp4'
             else:
                 cmd = f'yt-dlp -f "{ytf}" "{url}" -o "{name}.mp4"'
 
