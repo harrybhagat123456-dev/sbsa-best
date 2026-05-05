@@ -2,12 +2,12 @@
 FROM python:3.12-alpine3.20
 
 # Install Deno (JS runtime for yt-dlp PO token generation)
-# Pin v2.7.14 direct URL (no redirect, BusyBox wget compatible)
-RUN wget -q -O deno.zip https://github.com/denoland/deno/releases/download/v2.7.14/deno-x86_64-unknown-linux-musl.zip \
-    && unzip deno.zip \
-    && mv deno /usr/local/bin/deno \
+# Official installer auto-picks correct musl binary for Alpine
+RUN apk add --no-cache curl unzip \
+    && curl -fsSL https://deno.land/install.sh | sh \
+    && mv /root/.deno/bin/deno /usr/local/bin/deno \
     && chmod +x /usr/local/bin/deno \
-    && rm deno.zip
+    && rm -rf /root/.deno
 
 # Set the working directory
 WORKDIR /app
