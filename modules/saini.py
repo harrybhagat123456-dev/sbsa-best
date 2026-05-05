@@ -315,21 +315,118 @@ def time_name():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Auto-fetch free proxy from ProxyScrape API
+# Auto-fetch free proxy — tries multiple sources, caches, tests with yt-dlp
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _cached_proxy = ""
 _cached_proxy_time = 0
 _PROXY_CACHE_SECONDS = 1800  # Cache proxy for 30 minutes
+_PROXY_FAIL_COUNT = 0
+_PROXY_MAX_FAILS = 3        # Reset proxy after 3 consecutive failures
+
+
+def _fetch_proxy_sources():
+    """
+    Fetch free proxy lists from multiple sources.
+    Returns list of proxy URL strings (http://ip:port or socks5://ip:port).
+    """
+    import concurrent.futures
+    all_proxies = []
+
+    # Source 1: ProxyScrape API
+    def _fetch_proxyscrape():
+        try:
+            resp = requests.get(
+                "https://api.proxyscrape.com/v4/free-proxy-list/get",
+                params={
+                    "request": "display_proxies",
+                    "proxy_format": "protocolipport",
+                    "format": "text",
+                    "timeout": "5000",
+                    "country": "us,de,nl,gb,fr,jp,sg,in",
+                },
+                timeout=10
+            )
+            if resp.status_code == 200:
+                lines = [p.strip() for p in resp.text.strip().split("\n") if p.strip()]
+                return lines
+        except Exception:
+            pass
+        return []
+
+    # Source 2: FreeProxyList (via web scrape)
+    def _fetch_geonode():
+        try:
+            resp = requests.get(
+                "https://proxylist.geonode.com/api/proxy-list",
+                params={"limit": 30, "page": 1, "sort_by": "lastChecked", "sort_type": "desc"},
+                timeout=10
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                proxies = []
+                for p in data.get("data", []):
+                    proto = "socks5" if p.get("protocols", [""])[0] == "socks5" else "http"
+                    proxies.append(f"{proto}://{p['ip']}:{p['port']}")
+                return proxies
+        except Exception:
+            pass
+        return []
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+        f1 = pool.submit(_fetch_proxyscrape)
+        f2 = pool.submit(_fetch_geonode)
+        for f in concurrent.futures.as_completed([f1, f2], timeout=15):
+            try:
+                result = f.result()
+                if result:
+                    all_proxies.extend(result)
+                    logging.info(f"[YT-PROXY] Fetched {len(result)} proxies from source")
+            except Exception:
+                pass
+
+    return all_proxies
+
+
+def _test_proxy_ytdlp(proxy_url):
+    """
+    Test a proxy with yt-dlp extraction (not just HTTP GET).
+    This is the real test — can yt-dlp actually extract video info through this proxy?
+    Returns True if proxy works for yt-dlp YouTube extraction.
+    """
+    try:
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'skip_download': True,
+            'proxy': proxy_url,
+            'socket_timeout': 8,
+            'plugin_dirs': [],  # Prevent bgutil plugin from loading (no server running)
+            'extractor_args': {'youtube': {'player_client': ['tv_simply']}},
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info("https://www.youtube.com/watch?v=jNQXAC9IVRw", download=False)
+            if info and info.get('id') == 'jNQXAC9IVRw':
+                return True
+    except Exception:
+        pass
+    return False
+
 
 def _auto_fetch_proxy():
     """
-    Fetch a working free HTTP proxy from ProxyScrape API.
-    Tests each proxy against YouTube and returns the first one that works.
+    Fetch a working free proxy from multiple sources.
+    Tests each proxy against YouTube with actual yt-dlp extraction.
     Returns empty string if no working proxy found.
     """
     import concurrent.futures
-    global _cached_proxy, _cached_proxy_time
+    global _cached_proxy, _cached_proxy_time, _PROXY_FAIL_COUNT
+
+    # If cached proxy has failed too many times, invalidate it
+    if _cached_proxy and _PROXY_FAIL_COUNT >= _PROXY_MAX_FAILS:
+        logging.warning(f"[YT-PROXY] Cached proxy failed {_PROXY_FAIL_COUNT} times, invalidating")
+        _cached_proxy = ""
+        _PROXY_FAIL_COUNT = 0
 
     # Return cached proxy if still fresh
     now = time.time()
@@ -337,67 +434,80 @@ def _auto_fetch_proxy():
         logging.info(f"[YT-PROXY] Using cached proxy (age: {int(now - _cached_proxy_time)}s)")
         return _cached_proxy
 
-    logging.info("[YT-PROXY] No proxy configured, fetching free proxy from ProxyScrape...")
+    logging.info("[YT-PROXY] No proxy configured, fetching free proxies from multiple sources...")
 
     try:
-        # Fetch proxy list from ProxyScrape API
-        resp = requests.get(
-            "https://api.proxyscrape.com/v4/free-proxy-list/get",
-            params={
-                "request": "display_proxies",
-                "proxy_format": "protocolipport",
-                "format": "text",
-                "timeout": "5000",
-            },
-            timeout=10
-        )
-        if resp.status_code != 200:
-            logging.warning(f"[YT-PROXY] ProxyScrape API returned {resp.status_code}")
-            return _cached_proxy  # Return stale cache if available
-
-        proxy_lines = resp.text.strip().split("\n")
-        # Only try HTTP/HTTPS proxies (faster, more compatible with yt-dlp)
-        http_proxies = [p.strip() for p in proxy_lines if p.strip().startswith("http")]
-
-        if not http_proxies:
-            logging.warning("[YT-PROXY] No HTTP proxies found in list")
+        # Phase 1: Quick HTTP connectivity test (filter out dead proxies fast)
+        all_proxies = _fetch_proxy_sources()
+        if not all_proxies:
+            logging.warning("[YT-PROXY] No proxies fetched from any source")
             return _cached_proxy
 
-        logging.info(f"[YT-PROXY] Found {len(http_proxies)} HTTP proxies, testing...")
+        # Shuffle to avoid always hitting same proxies
+        import random
+        random.shuffle(all_proxies)
 
-        # Test proxies in parallel against YouTube
-        test_url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"  # Short video, fast test
-
-        def _test_single(proxy_url):
+        # Quick HTTP test — just check if proxy is alive and can reach YouTube
+        def _quick_test(p):
             try:
                 r = requests.get(
-                    test_url,
-                    proxies={"http": proxy_url, "https": proxy_url},
-                    timeout=10,
-                    headers={"User-Agent": "Mozilla/5.0"}
+                    "https://www.youtube.com/",
+                    proxies={"http": p, "https": p},
+                    timeout=8,
+                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
                 )
-                if r.status_code == 200 and "YouTube" in r.text:
-                    return proxy_url
+                return r.status_code == 200 and len(r.text) > 1000
             except Exception:
-                pass
-            return None
+                return False
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
-            futures = {pool.submit(_test_single, p): p for p in http_proxies[:20]}
-            for future in concurrent.futures.as_completed(futures, timeout=30):
-                result = future.result()
-                if result:
-                    _cached_proxy = result
-                    _cached_proxy_time = now
-                    logging.info(f"[YT-PROXY] Found working proxy: {result}")
-                    return result
+        alive_proxies = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as pool:
+            futures = {pool.submit(_quick_test, p): p for p in all_proxies[:50]}
+            for future in concurrent.futures.as_completed(futures, timeout=20):
+                try:
+                    if future.result():
+                        alive_proxies.append(futures[future])
+                except Exception:
+                    pass
 
-        logging.warning("[YT-PROXY] No working proxy found from ProxyScrape")
-        return _cached_proxy  # Return stale cache if available
+        if not alive_proxies:
+            logging.warning("[YT-PROXY] No alive proxies found")
+            return _cached_proxy
+
+        logging.info(f"[YT-PROXY] {len(alive_proxies)} proxies alive, testing with yt-dlp...")
+
+        # Phase 2: Real test with yt-dlp extraction (the actual test that matters)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+            futures = {pool.submit(_test_proxy_ytdlp, p): p for p in alive_proxies[:10]}
+            for future in concurrent.futures.as_completed(futures, timeout=60):
+                try:
+                    if future.result():
+                        found = futures[future]
+                        _cached_proxy = found
+                        _cached_proxy_time = now
+                        _PROXY_FAIL_COUNT = 0
+                        logging.info(f"[YT-PROXY] Found yt-dlp working proxy: {found}")
+                        return found
+                except Exception:
+                    pass
+
+        logging.warning("[YT-PROXY] No yt-dlp-working proxy found")
+        return _cached_proxy
 
     except Exception as e:
         logging.error(f"[YT-PROXY] Error fetching proxies: {str(e)[:100]}")
         return _cached_proxy
+
+
+def invalidate_proxy():
+    """Call this when a cached proxy fails during actual download."""
+    global _cached_proxy, _cached_proxy_time, _PROXY_FAIL_COUNT
+    _PROXY_FAIL_COUNT += 1
+    if _PROXY_FAIL_COUNT >= _PROXY_MAX_FAILS:
+        _cached_proxy = ""
+        _cached_proxy_time = 0
+        _PROXY_FAIL_COUNT = 0
+        logging.warning("[YT-PROXY] Proxy invalidated due to repeated failures")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -494,14 +604,25 @@ async def download_youtube_video(url, name, quality="720"):
             "best",
         ]
 
-    # Define client strategies: (player_client, use_cookies, label)
-    client_strategies = [
-        ("web", True, "web+cookies"),
-        ("ios", True, "ios+cookies"),
-        ("tv_simply", True, "tv+cookies"),
-        ("web", False, "web (no cookies)"),
-        ("tv_simply", False, "tv (no cookies)"),
-    ]
+    # Define client strategies: try without cookies first if we have a proxy
+    # (proxy is more likely to work without cookies on a fresh residential IP)
+    if proxy:
+        client_strategies = [
+            ("tv_simply", False, "tv+proxy"),
+            ("ios", False, "ios+proxy"),
+            ("web", False, "web+proxy"),
+            ("mweb", False, "mweb+proxy"),
+            ("web", True, "web+cookies+proxy"),
+            ("ios", True, "ios+cookies+proxy"),
+        ]
+    else:
+        client_strategies = [
+            ("web", True, "web+cookies"),
+            ("ios", True, "ios+cookies"),
+            ("tv_simply", True, "tv+cookies"),
+            ("web", False, "web (no cookies)"),
+            ("tv_simply", False, "tv (no cookies)"),
+        ]
 
     for client, use_cookies, label in client_strategies:
         # Skip cookie strategies if no cookies file
@@ -516,9 +637,13 @@ async def download_youtube_video(url, name, quality="720"):
                 'outtmpl': f'{safe_name}.%(ext)s',
                 'merge_output_format': 'mp4',
                 'quiet': True,
-                'no_warnings': False,
+                'no_warnings': True,
                 'skip_download': True,  # Extract only first
                 'extractor_args': {'youtube': {'player_client': [client]}},
+                'socket_timeout': 20,
+                'retries': 3,
+                # Disable bgutil plugin to avoid the 127.0.0.1:4416 ping warning
+                'plugin_dirs': [],
             }
 
             # Add proxy if configured (bypasses cloud IP bot detection)
@@ -564,12 +689,16 @@ async def download_youtube_video(url, name, quality="720"):
 
             except yt_dlp.utils.DownloadError as e:
                 err_str = str(e)
-                # If "Sign in to confirm" — cookies are dead, skip remaining cookie strategies
+                # If "Sign in to confirm" — cookies are dead or IP is blocked
                 if "Sign in to confirm" in err_str:
-                    logging.warning(f"[YT] {label}: Login required — cookies may be expired")
+                    logging.warning(f"[YT] {label}: Login/bot detection — skipping cookie strategies")
                     if use_cookies:
-                        last_download_error = f"YouTube requires sign-in. Your cookies may be expired. Please use /ytcookies to upload fresh cookies exported from your browser (while logged into YouTube)."
-                        break  # Skip remaining formats for this client, try next client
+                        last_download_error = "YouTube requires sign-in (cloud IP detected). Using proxy to bypass..."
+                        break  # Skip remaining cookie strategies for this client
+                    if proxy:
+                        # Proxy failed too, invalidate it so next call fetches a new one
+                        invalidate_proxy()
+                        last_download_error = "Proxy didn't bypass YouTube bot detection. Will fetch new proxy on next try..."
                     continue
                 elif "not available" in err_str:
                     logging.warning(f"[YT] {label}: Format not available — trying next format")
@@ -586,7 +715,10 @@ async def download_youtube_video(url, name, quality="720"):
 
     # All strategies failed
     if not last_download_error:
-        last_download_error = "All download strategies failed. The video may be private, age-restricted, or cookies are expired."
+        if not proxy:
+            last_download_error = "All strategies failed. YouTube is blocking this server's IP. The bot auto-fetches free proxies but none worked this time. Try again in a few minutes (proxy list refreshes), or set a reliable proxy via /setproxy command."
+        else:
+            last_download_error = "All strategies failed even with proxy. The video may be private, age-restricted, or geo-blocked."
     logging.error(f"[YT] ALL strategies failed for {url}: {last_download_error}")
     return None
 

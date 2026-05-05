@@ -35,10 +35,11 @@ COPY . .
 
 # Install Python dependencies
 # yt-dlp[default] includes EJS scripts for n-challenge solving (crucial!)
+# NOTE: bgutil-ytdlp-pot-provider removed — it requires a running bgutil server
+#       and causes "Error reaching GET http://127.0.0.1:4416/ping" warnings
 RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel \
     && pip3 install --no-cache-dir --upgrade -r sainibots.txt \
-    && pip3 install --no-cache-dir --upgrade "yt-dlp[default]" \
-    && pip3 install --no-cache-dir --upgrade bgutil-ytdlp-pot-provider
+    && pip3 install --no-cache-dir --upgrade "yt-dlp[default]"
 
 # Verify yt-dlp can find JS runtime
 RUN yt-dlp --version && yt-dlp --list-interfaces 2>&1 | head -5
