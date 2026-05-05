@@ -272,7 +272,7 @@ async def ytm_handler(bot: Client, m: Message):
             url = Vxy if (Vxy.startswith("http://") or Vxy.startswith("https://")) else "https://" + Vxy
 
             try:
-                cmd_title = f'yt-dlp --get-title --cookies {cookies_file_path} "{url}"'
+                cmd_title = f'yt-dlp --get-title --cookies {cookies_file_path} --extractor-args "youtube:po_token=web" "{url}"'
                 result = subprocess.run(cmd_title, shell=True, capture_output=True, text=True, timeout=10)
                 audio_title = result.stdout.strip()[:80] if (result.returncode == 0 and result.stdout.strip()) else f"YouTube_Video_{count:03d}"
             except Exception:
@@ -290,6 +290,7 @@ async def ytm_handler(bot: Client, m: Message):
                 )
                 output_template = f"{str(count).zfill(3)} {clean_name}"
                 cmd = (f'yt-dlp -x --audio-format mp3 --cookies {cookies_file_path} '
+                       f'--extractor-args "youtube:player_client=tv_simply,ios,android_vr;po_token=web" '
                        f'"{url}" -o "{output_template}.%(ext)s" {_YTDLP_EXTRA}')
                 result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
 
@@ -467,7 +468,7 @@ async def history_handler(bot: Client, m: Message):
             url = Vxy if (Vxy.startswith("http://") or Vxy.startswith("https://")) else "https://" + Vxy
 
             try:
-                cmd_title = f'yt-dlp --get-title --cookies {cookies_file_path} "{url}"'
+                cmd_title = f'yt-dlp --get-title --cookies {cookies_file_path} --extractor-args "youtube:po_token=web" "{url}"'
                 result = subprocess.run(cmd_title, shell=True, capture_output=True, text=True, timeout=10)
                 audio_title = result.stdout.strip()[:80] if (result.returncode == 0 and result.stdout.strip()) else f"YouTube_Video_{count:03d}"
             except Exception:
@@ -485,6 +486,7 @@ async def history_handler(bot: Client, m: Message):
                 )
                 output_template = f"{str(count).zfill(3)} {clean_name}"
                 cmd = (f'yt-dlp -x --audio-format mp3 --cookies {cookies_file_path} '
+                       f'--extractor-args "youtube:player_client=tv_simply,ios,android_vr;po_token=web" '
                        f'"{url}" -o "{output_template}.%(ext)s" {_YTDLP_EXTRA}')
                 result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
 
