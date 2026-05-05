@@ -1052,19 +1052,158 @@ async def download_youtube_video(url, output_name, quality=None, cookies_path=No
     if 'not a bot' in last_err.lower() or 'sign in' in last_err.lower():
         if not _YT_PROXY:
             _hint = (
-                "\n\n💡 TIP: YouTube is blocking this server's IP. "
-                "Set PROXY_URL env var (e.g., socks5://user:pass@host:port) "
-                "in Heroku Config Vars to use a residential proxy."
+                "\n\n💡 YouTube is blocking this server's IP for this video. "
+                "Set PROXY_URL env var in Heroku to fix all YouTube downloads."
             )
         elif not (cookies_path and os.path.isfile(cookies_path)):
             _hint = (
-                "\n\n💡 TIP: YouTube requires login cookies. "
+                "\n\n💡 YouTube requires login cookies. "
                 "Use /cookies command to upload cookies file."
             )
         else:
             _hint = (
-                "\n\n💡 TIP: Cookies may be expired or from a different IP. "
-                "Re-export cookies from your browser and upload with /cookies. "
-                "Also try refreshing your proxy subscription."
+                "\n\n💡 Cookies may be expired or from a different IP. "
+                "Re-export cookies from your browser and upload with /cookies."
             )
     raise Exception(f"YouTube download failed: {last_err}{_hint}")
+
+
+# ── YouTube download via Invidious/Piped fallback ──────────────────────────
+_INVIDIOUS_INSTANCES = [
+    'inv.nadeko.net',
+    'invidious.nerdvpn.de',
+    'invidious.materialio.us',
+    'vid.puffyan.us',
+    'invidious.privacyredirect.com',
+    'invidious.protokolla.fi',
+    'iv.ggtyler.dev',
+]
+
+def _extract_video_id(url):
+    """Extract YouTube video ID from various URL formats."""
+    patterns = [
+        r'(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/|youtube\.com/shorts/)([a-zA-Z0-9_-]{11})',
+    ]
+    for pat in patterns:
+        m = re.search(pat, url)
+        if m:
+            return m.group(1)
+    return None
+
+
+async def download_youtube_fallback(url, output_name):
+    """
+    Fallback YouTube downloader using Invidious/Piped API.
+    Used when yt-dlp fails due to bot detection.
+    Returns downloaded file path or raises Exception.
+    """
+    import requests as req
+
+    video_id = _extract_video_id(url)
+    if not video_id:
+        raise Exception("Could not extract video ID from URL")
+
+    last_err = ""
+    for instance in _INVIDIOUS_INSTANCES:
+        try:
+            api_url = f'https://{instance}/api/v1/videos/{video_id}'
+            resp = req.get(api_url, timeout=15, headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            })
+
+            if resp.status_code != 200:
+                continue
+
+            data = resp.json()
+
+            # Check if video has downloadable formats
+            adaptive = data.get('adaptiveFormats', [])
+            combined = data.get('formatStreams', [])
+
+            if not adaptive and not combined:
+                last_err = f"No formats available from {instance}"
+                continue
+
+            title = data.get('title', output_name)
+            print(f"[YT_FALLBACK] {instance}: Found '{title}' - adaptive:{len(adaptive)} combined:{len(combined)}")
+
+            # Get best video + best audio from adaptive formats
+            videos = [f for f in adaptive if f.get('type', '').startswith('video/')]
+            audios = [f for f in adaptive if f.get('type', '').startswith('audio/')]
+
+            if not videos:
+                last_err = "No video streams found"
+                continue
+
+            # Pick best video (highest resolution)
+            def _quality_val(f):
+                q = f.get('quality', '0')
+                if isinstance(q, int):
+                    return q
+                return int(''.join(c for c in str(q) if c.isdigit()) or '0')
+
+            best_video = max(videos, key=_quality_val)
+            best_audio = max(audios, key=lambda f: _quality_val(f)) if audios else None
+
+            # Download video
+            video_url = best_video.get('url')
+            if not video_url:
+                last_err = "Video URL not found in format"
+                continue
+
+            print(f"[YT_FALLBACK] Downloading video from {instance}...")
+            video_ext = best_video.get('type', 'video/mp4').split(';')[0].split('/')[1]
+            video_path = f'{output_name}_video.{video_ext}'
+
+            dl_resp = req.get(video_url, timeout=120, stream=True)
+            dl_resp.raise_for_status()
+            with open(video_path, 'wb') as f:
+                for chunk in dl_resp.iter_content(chunk_size=8192):
+                    f.write(chunk)
+
+            # Download audio if separate
+            audio_path = None
+            if best_audio and best_audio.get('url'):
+                audio_url = best_audio['url']
+                audio_ext = best_audio.get('type', 'audio/mp4').split(';')[0].split('/')[1]
+                audio_path = f'{output_name}_audio.{audio_ext}'
+
+                audio_resp = req.get(audio_url, timeout=120, stream=True)
+                audio_resp.raise_for_status()
+                with open(audio_path, 'wb') as f:
+                    for chunk in audio_resp.iter_content(chunk_size=8192):
+                        f.write(chunk)
+
+            # Merge with ffmpeg if audio is separate
+            if audio_path:
+                final_path = f'{output_name}.mp4'
+                merge_cmd = f'ffmpeg -y -i "{video_path}" -i "{audio_path}" -c:v copy -c:a aac "{final_path}"'
+                proc = await asyncio.create_subprocess_shell(merge_cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+                await proc.wait()
+                # Cleanup temp files
+                try:
+                    os.remove(video_path)
+                    os.remove(audio_path)
+                except Exception:
+                    pass
+            else:
+                final_path = video_path
+                # Rename to .mp4
+                if not final_path.endswith('.mp4'):
+                    mp4_path = f'{output_name}.mp4'
+                    os.rename(final_path, mp4_path)
+                    final_path = mp4_path
+
+            if os.path.isfile(final_path) and os.path.getsize(final_path) > 0:
+                size = os.path.getsize(final_path)
+                print(f"[YT_FALLBACK] SUCCESS: {final_path} ({size} bytes)")
+                return final_path
+
+            last_err = "Downloaded file is empty"
+
+        except Exception as e:
+            last_err = f"{instance}: {str(e)[:80]}"
+            print(f"[YT_FALLBACK] {last_err}")
+            continue
+
+    raise Exception(f"Invidious fallback also failed: {last_err}")
