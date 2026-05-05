@@ -315,6 +315,92 @@ def time_name():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Auto-fetch free proxy from ProxyScrape API
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_cached_proxy = ""
+_cached_proxy_time = 0
+_PROXY_CACHE_SECONDS = 1800  # Cache proxy for 30 minutes
+
+def _auto_fetch_proxy():
+    """
+    Fetch a working free HTTP proxy from ProxyScrape API.
+    Tests each proxy against YouTube and returns the first one that works.
+    Returns empty string if no working proxy found.
+    """
+    import concurrent.futures
+    global _cached_proxy, _cached_proxy_time
+
+    # Return cached proxy if still fresh
+    now = time.time()
+    if _cached_proxy and (now - _cached_proxy_time) < _PROXY_CACHE_SECONDS:
+        logging.info(f"[YT-PROXY] Using cached proxy (age: {int(now - _cached_proxy_time)}s)")
+        return _cached_proxy
+
+    logging.info("[YT-PROXY] No proxy configured, fetching free proxy from ProxyScrape...")
+
+    try:
+        # Fetch proxy list from ProxyScrape API
+        resp = requests.get(
+            "https://api.proxyscrape.com/v4/free-proxy-list/get",
+            params={
+                "request": "display_proxies",
+                "proxy_format": "protocolipport",
+                "format": "text",
+                "timeout": "5000",
+            },
+            timeout=10
+        )
+        if resp.status_code != 200:
+            logging.warning(f"[YT-PROXY] ProxyScrape API returned {resp.status_code}")
+            return _cached_proxy  # Return stale cache if available
+
+        proxy_lines = resp.text.strip().split("\n")
+        # Only try HTTP/HTTPS proxies (faster, more compatible with yt-dlp)
+        http_proxies = [p.strip() for p in proxy_lines if p.strip().startswith("http")]
+
+        if not http_proxies:
+            logging.warning("[YT-PROXY] No HTTP proxies found in list")
+            return _cached_proxy
+
+        logging.info(f"[YT-PROXY] Found {len(http_proxies)} HTTP proxies, testing...")
+
+        # Test proxies in parallel against YouTube
+        test_url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"  # Short video, fast test
+
+        def _test_single(proxy_url):
+            try:
+                r = requests.get(
+                    test_url,
+                    proxies={"http": proxy_url, "https": proxy_url},
+                    timeout=10,
+                    headers={"User-Agent": "Mozilla/5.0"}
+                )
+                if r.status_code == 200 and "YouTube" in r.text:
+                    return proxy_url
+            except Exception:
+                pass
+            return None
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
+            futures = {pool.submit(_test_single, p): p for p in http_proxies[:20]}
+            for future in concurrent.futures.as_completed(futures, timeout=30):
+                result = future.result()
+                if result:
+                    _cached_proxy = result
+                    _cached_proxy_time = now
+                    logging.info(f"[YT-PROXY] Found working proxy: {result}")
+                    return result
+
+        logging.warning("[YT-PROXY] No working proxy found from ProxyScrape")
+        return _cached_proxy  # Return stale cache if available
+
+    except Exception as e:
+        logging.error(f"[YT-PROXY] Error fetching proxies: {str(e)[:100]}")
+        return _cached_proxy
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Robust YouTube Downloader — uses yt_dlp Python API with multi-strategy fallback
 # Handles: cookies, multiple player clients, quality selection, aria2c fallback
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -375,14 +461,18 @@ async def download_youtube_video(url, name, quality="720"):
     last_download_error = ""
 
     # Load proxy from vars (set via env var YT_PROXY_URL or /setproxy command)
+    # If no proxy set, auto-fetch a fresh free proxy from proxyscrape
     try:
         from vars import yt_proxy_url as _proxy_url
         proxy = _proxy_url.strip() if _proxy_url else ""
     except ImportError:
         proxy = ""
 
+    if not proxy:
+        proxy = _auto_fetch_proxy()
+
     if proxy:
-        logging.info(f"[YT] Using proxy: {proxy[:50]}...")
+        logging.info(f"[YT] Using proxy: {proxy[:60]}")
 
     cookies_path = _resolve_cookies_path()
     base_name = name if name else "youtube_video"
